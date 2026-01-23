@@ -32,4 +32,4 @@ bin/
 session/
 exports/
 *.txt
-tg-summary
+/tg-summary
