@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"strconv"
+
+	"github.com/joho/godotenv"
 )
 
 // Config holds the application configuration.
@@ -16,8 +18,8 @@ type Config struct {
 
 // Load reads configuration from environment variables.
 func Load() (*Config, error) {
-	// Simple loader from environment for now
-	// In the future, we can add .env support
+	// Load .env file if it exists
+	_ = godotenv.Load()
 
 	appIDStr := os.Getenv("TG_APP_ID")
 	if appIDStr == "" {

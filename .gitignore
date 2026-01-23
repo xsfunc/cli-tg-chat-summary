@@ -27,3 +27,9 @@ go.work
 tmp/
 bin/
 .env
+
+# Application Artifacts
+session/
+exports/
+*.txt
+tg-summary
