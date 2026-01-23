@@ -21,6 +21,11 @@ CLI tool for authorizing on Telegram, parsing chats with unread messages, and su
    export TG_PHONE=+1234567890  # optional
    ```
 
+   > **Tip:** You can copy `.env.example` to `.env` and fill in your details:
+   > ```bash
+   > cp .env.example .env
+   > ```
+
 ## Usage
 
 ```bash
