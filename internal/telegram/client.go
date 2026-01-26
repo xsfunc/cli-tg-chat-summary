@@ -17,10 +17,11 @@ import (
 )
 
 type Client struct {
-	cfg       *config.Config
-	proto     *gotgproto.Client
-	ctx       *ext.Context
-	peerCache map[int64]tg.InputPeerClass
+	cfg          *config.Config
+	proto        *gotgproto.Client
+	ctx          *ext.Context
+	peerCache    map[int64]tg.InputPeerClass
+	channelCache map[int64]*tg.Channel // For forum operations
 }
 
 type Chat struct {
@@ -28,6 +29,14 @@ type Chat struct {
 	Title       string
 	UnreadCount int
 	IsChannel   bool
+	IsForum     bool
+	LastReadID  int
+}
+
+type Topic struct {
+	ID          int
+	Title       string
+	UnreadCount int
 	LastReadID  int
 }
 
@@ -40,8 +49,9 @@ type Message struct {
 
 func NewClient(cfg *config.Config) (*Client, error) {
 	return &Client{
-		cfg:       cfg,
-		peerCache: make(map[int64]tg.InputPeerClass),
+		cfg:          cfg,
+		peerCache:    make(map[int64]tg.InputPeerClass),
+		channelCache: make(map[int64]*tg.Channel),
 	}, nil
 }
 
@@ -109,6 +119,7 @@ func (c *Client) processDialogs(dialogs []tg.DialogClass, chats []tg.ChatClass, 
 			c.peerCache[item.ID] = &tg.InputPeerChat{ChatID: item.ID}
 		case *tg.Channel:
 			c.peerCache[item.ID] = &tg.InputPeerChannel{ChannelID: item.ID, AccessHash: item.AccessHash}
+			c.channelCache[item.ID] = item // Cache for forum operations
 		}
 	}
 	userMap := make(map[int64]tg.UserClass)
@@ -131,6 +142,7 @@ func (c *Client) processDialogs(dialogs []tg.DialogClass, chats []tg.ChatClass, 
 		var title string
 		var peerID int64
 		var isChannel bool
+		var isForum bool
 
 		switch p := dlg.Peer.(type) {
 		case *tg.PeerUser:
@@ -159,6 +171,7 @@ func (c *Client) processDialogs(dialogs []tg.DialogClass, chats []tg.ChatClass, 
 				switch channel := ch.(type) {
 				case *tg.Channel:
 					title = channel.Title
+					isForum = channel.Forum
 				}
 			}
 		}
@@ -172,6 +185,7 @@ func (c *Client) processDialogs(dialogs []tg.DialogClass, chats []tg.ChatClass, 
 			Title:       title,
 			UnreadCount: dlg.UnreadCount,
 			IsChannel:   isChannel,
+			IsForum:     isForum,
 			LastReadID:  dlg.ReadInboxMaxID,
 		})
 	}
@@ -397,4 +411,214 @@ func (c *Client) fetchUserName(inputUser tg.InputUserClass) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("user not found")
+}
+
+// GetForumTopics fetches all topics from a forum with their unread counts.
+func (c *Client) GetForumTopics(chatID int64) ([]Topic, error) {
+	inputPeer, ok := c.peerCache[chatID]
+	if !ok {
+		inputPeer = c.ctx.PeerStorage.GetInputPeerById(chatID)
+	}
+	if inputPeer == nil {
+		return nil, fmt.Errorf("peer %d not found", chatID)
+	}
+
+	topics, err := c.ctx.Raw.MessagesGetForumTopics(c.ctx, &tg.MessagesGetForumTopicsRequest{
+		Peer:  inputPeer,
+		Limit: 100,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get forum topics: %w", err)
+	}
+
+	var result []Topic
+	for _, t := range topics.Topics {
+		topic, ok := t.(*tg.ForumTopic)
+		if !ok {
+			continue
+		}
+		result = append(result, Topic{
+			ID:          topic.ID,
+			Title:       topic.Title,
+			UnreadCount: topic.UnreadCount,
+			LastReadID:  topic.ReadInboxMaxID,
+		})
+	}
+
+	return result, nil
+}
+
+// GetTopicMessages fetches unread messages from a specific topic.
+func (c *Client) GetTopicMessages(chatID int64, topicID int, lastReadID int) ([]Message, error) {
+	inputPeer, ok := c.peerCache[chatID]
+	if !ok {
+		inputPeer = c.ctx.PeerStorage.GetInputPeerById(chatID)
+	}
+	if inputPeer == nil {
+		return nil, fmt.Errorf("peer %d not found", chatID)
+	}
+
+	var allMessages []Message
+	offsetID := 0
+	batchSize := 100
+
+	for {
+		time.Sleep(1 * time.Second) // Rate limit
+
+		var msgs []tg.MessageClass
+		var users []tg.UserClass
+
+		if topicID == 1 {
+			// General topic - use regular GetHistory but filter messages without ReplyTo.TopMsgID
+			req := &tg.MessagesGetHistoryRequest{
+				Peer:     inputPeer,
+				Limit:    batchSize,
+				OffsetID: offsetID,
+			}
+			history, err := c.ctx.Raw.MessagesGetHistory(c.ctx, req)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get history: %w", err)
+			}
+
+			switch h := history.(type) {
+			case *tg.MessagesMessages:
+				msgs = h.Messages
+				users = h.Users
+			case *tg.MessagesMessagesSlice:
+				msgs = h.Messages
+				users = h.Users
+			case *tg.MessagesChannelMessages:
+				msgs = h.Messages
+				users = h.Users
+			}
+		} else {
+			// Non-general topic - use GetReplies
+			req := &tg.MessagesGetRepliesRequest{
+				Peer:     inputPeer,
+				MsgID:    topicID,
+				Limit:    batchSize,
+				OffsetID: offsetID,
+			}
+			replies, err := c.ctx.Raw.MessagesGetReplies(c.ctx, req)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get topic replies: %w", err)
+			}
+
+			switch r := replies.(type) {
+			case *tg.MessagesMessages:
+				msgs = r.Messages
+				users = r.Users
+			case *tg.MessagesMessagesSlice:
+				msgs = r.Messages
+				users = r.Users
+			case *tg.MessagesChannelMessages:
+				msgs = r.Messages
+				users = r.Users
+			}
+		}
+
+		if len(msgs) == 0 {
+			break
+		}
+
+		userMap := make(map[int64]tg.UserClass)
+		for _, u := range users {
+			userMap[u.GetID()] = u
+		}
+
+		lastID := 0
+		foundRead := false
+
+		for _, m := range msgs {
+			msg, ok := m.(*tg.Message)
+			if !ok {
+				continue
+			}
+
+			// For General topic, filter to only include messages without ReplyTo or with top_msg_id=0
+			if topicID == 1 {
+				if msg.ReplyTo != nil {
+					if reply, ok := msg.ReplyTo.(*tg.MessageReplyHeader); ok && reply.ReplyToTopID != 0 {
+						continue // This message belongs to another topic
+					}
+				}
+			}
+
+			lastID = msg.ID
+
+			if msg.ID <= lastReadID {
+				foundRead = true
+				break
+			}
+
+			if msg.Message == "" || msg.Out {
+				continue
+			}
+
+			sender := "Unknown"
+			if msg.FromID != nil {
+				switch p := msg.FromID.(type) {
+				case *tg.PeerUser:
+					if u, ok := userMap[p.UserID]; ok {
+						switch user := u.(type) {
+						case *tg.User:
+							sender = user.FirstName + " " + user.LastName
+							if sender == " " {
+								sender = "Deleted Account"
+							}
+						}
+					} else {
+						name, err := c.getSenderName(p.UserID)
+						if err == nil {
+							sender = name
+						}
+					}
+				}
+			}
+			if sender == " " || sender == "" {
+				sender = "Unknown"
+			}
+
+			allMessages = append(allMessages, Message{
+				ID:     msg.ID,
+				Date:   time.Unix(int64(msg.Date), 0),
+				Text:   msg.Message,
+				Sender: sender,
+			})
+		}
+
+		if foundRead {
+			break
+		}
+
+		offsetID = lastID
+
+		if len(msgs) < batchSize {
+			break
+		}
+	}
+
+	return allMessages, nil
+}
+
+// MarkTopicAsRead marks a specific topic as read up to the given message ID.
+func (c *Client) MarkTopicAsRead(chatID int64, topicID int, maxID int) error {
+	inputPeer, ok := c.peerCache[chatID]
+	if !ok {
+		inputPeer = c.ctx.PeerStorage.GetInputPeerById(chatID)
+	}
+	if inputPeer == nil {
+		return fmt.Errorf("peer %d not found", chatID)
+	}
+
+	_, err := c.ctx.Raw.MessagesReadDiscussion(c.ctx, &tg.MessagesReadDiscussionRequest{
+		Peer:      inputPeer,
+		MsgID:     topicID,
+		ReadMaxID: maxID,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to mark topic as read: %w", err)
+	}
+
+	return nil
 }

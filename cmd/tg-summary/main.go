@@ -64,10 +64,56 @@ func main() {
 		return
 	}
 
-	fmt.Printf("Fetching unread messages for %s...\n", selectedChat.Title)
-	messages, err := tgClient.GetUnreadMessages(selectedChat.ID, selectedChat.LastReadID)
-	if err != nil {
-		log.Fatalf("failed to get messages: %v", err)
+	var messages []telegram.Message
+	var exportTitle string
+	var selectedTopic *telegram.Topic
+
+	// Handle forum topic selection
+	if selectedChat.IsForum {
+		fmt.Printf("Fetching topics for forum %s...\n", selectedChat.Title)
+		topics, err := tgClient.GetForumTopics(selectedChat.ID)
+		if err != nil {
+			log.Fatalf("failed to get forum topics: %v", err)
+		}
+
+		if len(topics) == 0 {
+			fmt.Println("No topics found in forum.")
+			return
+		}
+
+		// Show topic selection TUI
+		topicModel := tui.NewTopicModel(topics)
+		tp := tea.NewProgram(topicModel)
+		finalTopicModel, err := tp.Run()
+		if err != nil {
+			log.Fatalf("failed to run topic TUI: %v", err)
+		}
+
+		tm, ok := finalTopicModel.(tui.TopicModel)
+		if !ok {
+			log.Fatalf("internal error: invalid topic model type")
+		}
+
+		selectedTopic = tm.GetSelected()
+		if selectedTopic == nil {
+			fmt.Println("No topic selected.")
+			return
+		}
+
+		fmt.Printf("Fetching unread messages for topic %s...\n", selectedTopic.Title)
+		messages, err = tgClient.GetTopicMessages(selectedChat.ID, selectedTopic.ID, selectedTopic.LastReadID)
+		if err != nil {
+			log.Fatalf("failed to get topic messages: %v", err)
+		}
+		exportTitle = selectedChat.Title + " - " + selectedTopic.Title
+	} else {
+		fmt.Printf("Fetching unread messages for %s...\n", selectedChat.Title)
+		var err error
+		messages, err = tgClient.GetUnreadMessages(selectedChat.ID, selectedChat.LastReadID)
+		if err != nil {
+			log.Fatalf("failed to get messages: %v", err)
+		}
+		exportTitle = selectedChat.Title
 	}
 
 	if len(messages) == 0 {
@@ -76,8 +122,8 @@ func main() {
 	}
 
 	// Export to file
-	// format: ChatName_Date.txt
-	cleanName := sanitizeFilename(selectedChat.Title)
+	// format: ChatName_Date.txt or ChatName_TopicName_Date.txt
+	cleanName := sanitizeFilename(exportTitle)
 	dateStr := time.Now().Format("2006-01-02")
 	filename := fmt.Sprintf("exports/%s_%s.txt", cleanName, dateStr)
 
@@ -96,7 +142,7 @@ func main() {
 	}
 	defer f.Close()
 
-	fmt.Fprintf(f, "Chat Summary: %s\n", selectedChat.Title)
+	fmt.Fprintf(f, "Chat Summary: %s\n", exportTitle)
 	fmt.Fprintf(f, "Export Date: %s\n", time.Now().Format(time.RFC1123))
 	fmt.Fprintf(f, "Total Messages: %d\n\n", len(messages))
 
@@ -126,7 +172,13 @@ func main() {
 
 	if maxID > 0 {
 		fmt.Println("Marking messages as read...")
-		if err := tgClient.MarkAsRead(*selectedChat, maxID); err != nil {
+		var err error
+		if selectedTopic != nil {
+			err = tgClient.MarkTopicAsRead(selectedChat.ID, selectedTopic.ID, maxID)
+		} else {
+			err = tgClient.MarkAsRead(*selectedChat, maxID)
+		}
+		if err != nil {
 			fmt.Printf("Warning: failed to mark messages as read: %v\n", err)
 		} else {
 			fmt.Println("Messages marked as read.")
