@@ -699,3 +699,259 @@ func (c *Client) resolveMissingUsers(ctx context.Context, msgs []tg.MessageClass
 		}
 	}
 }
+
+// GetMessagesByDate fetches messages within a specific date range.
+func (c *Client) GetMessagesByDate(ctx context.Context, chatID int64, since, until time.Time) ([]Message, error) {
+	inputPeer, ok := c.peerCache[chatID]
+	if !ok {
+		inputPeer = c.ctx.PeerStorage.GetInputPeerById(chatID)
+	}
+	if inputPeer == nil {
+		return nil, fmt.Errorf("peer %d not found", chatID)
+	}
+
+	var allMessages []Message
+	offsetID := 0
+	batchSize := 100
+
+	for {
+		req := &tg.MessagesGetHistoryRequest{
+			Peer:     inputPeer,
+			Limit:    batchSize,
+			OffsetID: offsetID,
+		}
+
+		history, err := c.ctx.Raw.MessagesGetHistory(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get history: %w", err)
+		}
+
+		var msgs []tg.MessageClass
+		var users []tg.UserClass
+
+		switch h := history.(type) {
+		case *tg.MessagesMessages:
+			msgs = h.Messages
+			users = h.Users
+		case *tg.MessagesMessagesSlice:
+			msgs = h.Messages
+			users = h.Users
+		case *tg.MessagesChannelMessages:
+			msgs = h.Messages
+			users = h.Users
+		}
+
+		if len(msgs) == 0 {
+			break
+		}
+
+		userMap := make(map[int64]tg.UserClass)
+		for _, u := range users {
+			userMap[u.GetID()] = u
+		}
+		c.resolveMissingUsers(ctx, msgs, userMap)
+
+		lastID := 0
+		tooOld := false
+
+		for _, m := range msgs {
+			msg, ok := m.(*tg.Message)
+			if !ok {
+				continue
+			}
+			lastID = msg.ID
+
+			msgTime := time.Unix(int64(msg.Date), 0)
+
+			// Messages are newest first
+			if msgTime.Before(since) {
+				tooOld = true
+				break
+			}
+
+			if msgTime.After(until) {
+				continue
+			}
+
+			if msg.Message == "" || msg.Out {
+				continue
+			}
+
+			sender := c.resolveSender(ctx, msg.FromID, userMap)
+
+			allMessages = append(allMessages, Message{
+				ID:     msg.ID,
+				Date:   msgTime,
+				Text:   msg.Message,
+				Sender: sender,
+			})
+		}
+
+		if tooOld {
+			break
+		}
+
+		offsetID = lastID
+		if len(msgs) < batchSize {
+			break
+		}
+	}
+
+	return allMessages, nil
+}
+
+// GetTopicMessagesByDate fetches topic messages within a specific date range.
+func (c *Client) GetTopicMessagesByDate(ctx context.Context, chatID int64, topicID int, since, until time.Time) ([]Message, error) {
+	inputPeer, ok := c.peerCache[chatID]
+	if !ok {
+		inputPeer = c.ctx.PeerStorage.GetInputPeerById(chatID)
+	}
+	if inputPeer == nil {
+		return nil, fmt.Errorf("peer %d not found", chatID)
+	}
+
+	var allMessages []Message
+	offsetID := 0
+	batchSize := 100
+
+	for {
+		var msgs []tg.MessageClass
+		var users []tg.UserClass
+
+		if topicID == 1 {
+			req := &tg.MessagesGetHistoryRequest{
+				Peer:     inputPeer,
+				Limit:    batchSize,
+				OffsetID: offsetID,
+			}
+			history, err := c.ctx.Raw.MessagesGetHistory(ctx, req)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get history: %w", err)
+			}
+			switch h := history.(type) {
+			case *tg.MessagesMessages:
+				msgs = h.Messages
+				users = h.Users
+			case *tg.MessagesMessagesSlice:
+				msgs = h.Messages
+				users = h.Users
+			case *tg.MessagesChannelMessages:
+				msgs = h.Messages
+				users = h.Users
+			}
+		} else {
+			req := &tg.MessagesGetRepliesRequest{
+				Peer:     inputPeer,
+				MsgID:    topicID,
+				Limit:    batchSize,
+				OffsetID: offsetID,
+			}
+			replies, err := c.ctx.Raw.MessagesGetReplies(ctx, req)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get topic replies: %w", err)
+			}
+			switch r := replies.(type) {
+			case *tg.MessagesMessages:
+				msgs = r.Messages
+				users = r.Users
+			case *tg.MessagesMessagesSlice:
+				msgs = r.Messages
+				users = r.Users
+			case *tg.MessagesChannelMessages:
+				msgs = r.Messages
+				users = r.Users
+			}
+		}
+
+		if len(msgs) == 0 {
+			break
+		}
+
+		userMap := make(map[int64]tg.UserClass)
+		for _, u := range users {
+			userMap[u.GetID()] = u
+		}
+		c.resolveMissingUsers(ctx, msgs, userMap)
+
+		lastID := 0
+		tooOld := false
+
+		for _, m := range msgs {
+			msg, ok := m.(*tg.Message)
+			if !ok {
+				continue
+			}
+
+			if topicID == 1 {
+				if msg.ReplyTo != nil {
+					if reply, ok := msg.ReplyTo.(*tg.MessageReplyHeader); ok && reply.ReplyToTopID != 0 {
+						continue
+					}
+				}
+			}
+
+			lastID = msg.ID
+			msgTime := time.Unix(int64(msg.Date), 0)
+
+			if msgTime.Before(since) {
+				tooOld = true
+				break
+			}
+
+			if msgTime.After(until) {
+				continue
+			}
+
+			if msg.Message == "" || msg.Out {
+				continue
+			}
+
+			sender := c.resolveSender(ctx, msg.FromID, userMap)
+
+			allMessages = append(allMessages, Message{
+				ID:     msg.ID,
+				Date:   msgTime,
+				Text:   msg.Message,
+				Sender: sender,
+			})
+		}
+
+		if tooOld {
+			break
+		}
+
+		offsetID = lastID
+		if len(msgs) < batchSize {
+			break
+		}
+	}
+
+	return allMessages, nil
+}
+
+func (c *Client) resolveSender(ctx context.Context, fromID tg.PeerClass, userMap map[int64]tg.UserClass) string {
+	sender := "Unknown"
+	if fromID != nil {
+		switch p := fromID.(type) {
+		case *tg.PeerUser:
+			if u, ok := userMap[p.UserID]; ok {
+				switch user := u.(type) {
+				case *tg.User:
+					sender = user.FirstName + " " + user.LastName
+					if sender == " " {
+						sender = "Deleted Account"
+					}
+				}
+			} else {
+				name, err := c.getSenderName(ctx, p.UserID)
+				if err == nil {
+					sender = name
+				}
+			}
+		}
+	}
+	if sender == " " || sender == "" {
+		sender = "Unknown"
+	}
+	return sender
+}

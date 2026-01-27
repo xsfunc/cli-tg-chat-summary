@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -18,6 +19,37 @@ import (
 )
 
 func main() {
+	var sinceStr, untilStr string
+	flag.StringVar(&sinceStr, "since", "", "Start date (YYYY-MM-DD)")
+	flag.StringVar(&untilStr, "until", "", "End date (YYYY-MM-DD)")
+	flag.Parse()
+
+	var sinceTime, untilTime time.Time
+	var useDateRange bool
+	var err error
+
+	if sinceStr != "" {
+		useDateRange = true
+		sinceTime, err = time.Parse("2006-01-02", sinceStr)
+		if err != nil {
+			fmt.Printf("Error: Invalid date format for --since: %s\n", sinceStr)
+			fmt.Println("Please use the format YYYY-MM-DD (e.g., 2024-01-20)")
+			os.Exit(1)
+		}
+		if untilStr != "" {
+			untilTime, err = time.Parse("2006-01-02", untilStr)
+			if err != nil {
+				fmt.Printf("Error: Invalid date format for --until: %s\n", untilStr)
+				fmt.Println("Please use the format YYYY-MM-DD (e.g., 2024-01-20)")
+				os.Exit(1)
+			}
+			// set until to end of that day
+			untilTime = untilTime.Add(24 * time.Hour).Add(-time.Nanosecond)
+		} else {
+			untilTime = time.Now()
+		}
+	}
+
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
@@ -106,16 +138,25 @@ func main() {
 			return
 		}
 
-		fmt.Printf("Fetching unread messages for topic %s...\n", selectedTopic.Title)
-		messages, err = tgClient.GetTopicMessages(ctx, selectedChat.ID, selectedTopic.ID, selectedTopic.LastReadID)
+		if useDateRange {
+			fmt.Printf("Fetching messages for topic %s from %s to %s...\n", selectedTopic.Title, sinceTime.Format("2006-01-02"), untilTime.Format("2006-01-02"))
+			messages, err = tgClient.GetTopicMessagesByDate(ctx, selectedChat.ID, selectedTopic.ID, sinceTime, untilTime)
+		} else {
+			fmt.Printf("Fetching unread messages for topic %s...\n", selectedTopic.Title)
+			messages, err = tgClient.GetTopicMessages(ctx, selectedChat.ID, selectedTopic.ID, selectedTopic.LastReadID)
+		}
 		if err != nil {
 			log.Fatalf("failed to get topic messages: %v", err)
 		}
 		exportTitle = selectedChat.Title + " - " + selectedTopic.Title
 	} else {
-		fmt.Printf("Fetching unread messages for %s...\n", selectedChat.Title)
-		var err error
-		messages, err = tgClient.GetUnreadMessages(ctx, selectedChat.ID, selectedChat.LastReadID)
+		if useDateRange {
+			fmt.Printf("Fetching messages for %s from %s to %s...\n", selectedChat.Title, sinceTime.Format("2006-01-02"), untilTime.Format("2006-01-02"))
+			messages, err = tgClient.GetMessagesByDate(ctx, selectedChat.ID, sinceTime, untilTime)
+		} else {
+			fmt.Printf("Fetching unread messages for %s...\n", selectedChat.Title)
+			messages, err = tgClient.GetUnreadMessages(ctx, selectedChat.ID, selectedChat.LastReadID)
+		}
 		if err != nil {
 			log.Fatalf("failed to get messages: %v", err)
 		}
@@ -176,7 +217,7 @@ func main() {
 		}
 	}
 
-	if maxID > 0 {
+	if maxID > 0 && !useDateRange {
 		fmt.Println("Marking messages as read...")
 		var err error
 		if selectedTopic != nil {

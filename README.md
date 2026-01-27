@@ -38,7 +38,22 @@ Or run directly:
 make run
 ```
 
+
+### Date Range Export
+
+You can export messages from a specific date range instead of just unread messages.
+When using date range mode, **messages will NOT be marked as read**.
+
+```bash
+# Export from a specific date until now
+./bin/tg-summary --since 2024-01-01
+
+# Export messages within a specific range
+./bin/tg-summary --since 2024-01-01 --until 2024-01-31
+```
+
 ## Project Structure
+
 
 ```
 cmd/tg-summary/     - Main entry point
