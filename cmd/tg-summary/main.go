@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"time"
@@ -22,6 +24,10 @@ func main() {
 		log.Fatalf("failed to load config: %v", err)
 	}
 
+	// Setup context
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
 	// Initialize Telegram client
 	tgClient, err := telegram.NewClient(cfg)
 	if err != nil {
@@ -30,12 +36,12 @@ func main() {
 
 	// Login
 	fmt.Println("Authenticating with Telegram...")
-	if err := tgClient.Login(os.Stdin); err != nil {
+	if err := tgClient.Login(ctx, os.Stdin); err != nil {
 		log.Fatalf("failed to login: %v", err)
 	}
 
 	fmt.Println("Fetching chats (this might take a moment)...")
-	chats, err := tgClient.GetDialogs()
+	chats, err := tgClient.GetDialogs(ctx)
 	if err != nil {
 		log.Fatalf("failed to get dialogs: %v", err)
 	}
@@ -71,7 +77,7 @@ func main() {
 	// Handle forum topic selection
 	if selectedChat.IsForum {
 		fmt.Printf("Fetching topics for forum %s...\n", selectedChat.Title)
-		topics, err := tgClient.GetForumTopics(selectedChat.ID)
+		topics, err := tgClient.GetForumTopics(ctx, selectedChat.ID)
 		if err != nil {
 			log.Fatalf("failed to get forum topics: %v", err)
 		}
@@ -101,7 +107,7 @@ func main() {
 		}
 
 		fmt.Printf("Fetching unread messages for topic %s...\n", selectedTopic.Title)
-		messages, err = tgClient.GetTopicMessages(selectedChat.ID, selectedTopic.ID, selectedTopic.LastReadID)
+		messages, err = tgClient.GetTopicMessages(ctx, selectedChat.ID, selectedTopic.ID, selectedTopic.LastReadID)
 		if err != nil {
 			log.Fatalf("failed to get topic messages: %v", err)
 		}
@@ -109,7 +115,7 @@ func main() {
 	} else {
 		fmt.Printf("Fetching unread messages for %s...\n", selectedChat.Title)
 		var err error
-		messages, err = tgClient.GetUnreadMessages(selectedChat.ID, selectedChat.LastReadID)
+		messages, err = tgClient.GetUnreadMessages(ctx, selectedChat.ID, selectedChat.LastReadID)
 		if err != nil {
 			log.Fatalf("failed to get messages: %v", err)
 		}
@@ -174,9 +180,9 @@ func main() {
 		fmt.Println("Marking messages as read...")
 		var err error
 		if selectedTopic != nil {
-			err = tgClient.MarkTopicAsRead(selectedChat.ID, selectedTopic.ID, maxID)
+			err = tgClient.MarkTopicAsRead(ctx, selectedChat.ID, selectedTopic.ID, maxID)
 		} else {
-			err = tgClient.MarkAsRead(*selectedChat, maxID)
+			err = tgClient.MarkAsRead(ctx, *selectedChat, maxID)
 		}
 		if err != nil {
 			fmt.Printf("Warning: failed to mark messages as read: %v\n", err)

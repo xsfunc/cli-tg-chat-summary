@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -13,7 +14,11 @@ import (
 	"github.com/celestix/gotgproto/ext"
 	"github.com/celestix/gotgproto/sessionMaker"
 	"github.com/glebarez/sqlite"
+	"github.com/gotd/contrib/middleware/floodwait"
+	"github.com/gotd/contrib/middleware/ratelimit"
+	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/tg"
+	"golang.org/x/time/rate"
 )
 
 type Client struct {
@@ -55,7 +60,7 @@ func NewClient(cfg *config.Config) (*Client, error) {
 	}, nil
 }
 
-func (c *Client) Login(input io.Reader) error {
+func (c *Client) Login(ctx context.Context, input io.Reader) error {
 	// Ensure session directory exists
 	if err := os.MkdirAll("session", 0755); err != nil {
 		return fmt.Errorf("failed to create session directory: %w", err)
@@ -68,6 +73,10 @@ func (c *Client) Login(input io.Reader) error {
 		&gotgproto.ClientOpts{
 			Session:         sessionMaker.SqlSession(sqlite.Open("session/session.db")),
 			AuthConversator: gotgproto.BasicConversator(),
+			Middlewares: []telegram.Middleware{
+				floodwait.NewWaiter(),
+				ratelimit.New(rate.Every(100*time.Millisecond), 5),
+			},
 		},
 	)
 	if err != nil {
@@ -80,12 +89,12 @@ func (c *Client) Login(input io.Reader) error {
 	return nil
 }
 
-func (c *Client) GetDialogs() ([]Chat, error) {
+func (c *Client) GetDialogs(ctx context.Context) ([]Chat, error) {
 	if c.ctx == nil {
 		c.ctx = c.proto.CreateContext()
 	}
 
-	dialogs, err := c.ctx.Raw.MessagesGetDialogs(c.ctx, &tg.MessagesGetDialogsRequest{
+	dialogs, err := c.ctx.Raw.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{
 		Limit:      100,
 		OffsetPeer: &tg.InputPeerEmpty{},
 	})
@@ -192,7 +201,7 @@ func (c *Client) processDialogs(dialogs []tg.DialogClass, chats []tg.ChatClass, 
 	return results
 }
 
-func (c *Client) GetUnreadMessages(chatID int64, lastReadID int) ([]Message, error) {
+func (c *Client) GetUnreadMessages(ctx context.Context, chatID int64, lastReadID int) ([]Message, error) {
 	inputPeer, ok := c.peerCache[chatID]
 	if !ok {
 		// Fallback to storage if not in cache (though unlikely for dialogs)
@@ -209,8 +218,7 @@ func (c *Client) GetUnreadMessages(chatID int64, lastReadID int) ([]Message, err
 
 	// Check loop: fetch until we find messages <= lastReadID OR end of history
 	for {
-		// Rate limit: wait 1 second between requests
-		time.Sleep(1 * time.Second)
+		// Rate limit is handled by middleware
 
 		req := &tg.MessagesGetHistoryRequest{
 			Peer:     inputPeer,
@@ -218,7 +226,7 @@ func (c *Client) GetUnreadMessages(chatID int64, lastReadID int) ([]Message, err
 			OffsetID: offsetID,
 		}
 
-		history, err := c.ctx.Raw.MessagesGetHistory(c.ctx, req)
+		history, err := c.ctx.Raw.MessagesGetHistory(ctx, req)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get history: %w", err)
 		}
@@ -249,7 +257,7 @@ func (c *Client) GetUnreadMessages(chatID int64, lastReadID int) ([]Message, err
 		}
 
 		// Batch resolve missing users to avoid N+1 queries
-		c.resolveMissingUsers(msgs, userMap)
+		c.resolveMissingUsers(ctx, msgs, userMap)
 
 		lastID := 0
 		foundRead := false
@@ -290,7 +298,7 @@ func (c *Client) GetUnreadMessages(chatID int64, lastReadID int) ([]Message, err
 						}
 					} else {
 						// Fallback to general resolution
-						name, err := c.getSenderName(p.UserID)
+						name, err := c.getSenderName(ctx, p.UserID)
 						if err == nil {
 							sender = name
 						}
@@ -323,7 +331,7 @@ func (c *Client) GetUnreadMessages(chatID int64, lastReadID int) ([]Message, err
 	return allMessages, nil
 }
 
-func (c *Client) MarkAsRead(chat Chat, maxID int) error {
+func (c *Client) MarkAsRead(ctx context.Context, chat Chat, maxID int) error {
 	inputPeer, ok := c.peerCache[chat.ID]
 	if !ok {
 		// Fallback to storage
@@ -342,7 +350,7 @@ func (c *Client) MarkAsRead(chat Chat, maxID int) error {
 		}
 
 		// For channels/supergroups
-		_, err := c.ctx.Raw.ChannelsReadHistory(c.ctx, &tg.ChannelsReadHistoryRequest{
+		_, err := c.ctx.Raw.ChannelsReadHistory(ctx, &tg.ChannelsReadHistoryRequest{
 			Channel: &tg.InputChannel{
 				ChannelID:  inputChannel.ChannelID,
 				AccessHash: inputChannel.AccessHash,
@@ -354,7 +362,7 @@ func (c *Client) MarkAsRead(chat Chat, maxID int) error {
 		}
 	} else {
 		// For users and basic groups
-		_, err := c.ctx.Raw.MessagesReadHistory(c.ctx, &tg.MessagesReadHistoryRequest{
+		_, err := c.ctx.Raw.MessagesReadHistory(ctx, &tg.MessagesReadHistoryRequest{
 			Peer:  inputPeer,
 			MaxID: maxID,
 		})
@@ -366,7 +374,7 @@ func (c *Client) MarkAsRead(chat Chat, maxID int) error {
 	return nil
 }
 
-func (c *Client) getSenderName(userID int64) (string, error) {
+func (c *Client) getSenderName(ctx context.Context, userID int64) (string, error) {
 	// Try cache first
 	if inputPeer, ok := c.peerCache[userID]; ok {
 		// Check against self
@@ -379,7 +387,7 @@ func (c *Client) getSenderName(userID int64) (string, error) {
 				UserID:     userPeer.UserID,
 				AccessHash: userPeer.AccessHash,
 			}
-			return c.fetchUserName(inputUser)
+			return c.fetchUserName(ctx, inputUser)
 		}
 	}
 
@@ -391,7 +399,7 @@ func (c *Client) getSenderName(userID int64) (string, error) {
 
 	switch p := inputPeer.(type) {
 	case *tg.InputPeerUser:
-		return c.fetchUserName(&tg.InputUser{UserID: p.UserID, AccessHash: p.AccessHash})
+		return c.fetchUserName(ctx, &tg.InputUser{UserID: p.UserID, AccessHash: p.AccessHash})
 	case *tg.InputPeerSelf:
 		if c.proto.Self.ID == userID {
 			return c.proto.Self.FirstName, nil
@@ -402,8 +410,8 @@ func (c *Client) getSenderName(userID int64) (string, error) {
 	return "", fmt.Errorf("peer is not a user")
 }
 
-func (c *Client) fetchUserName(inputUser tg.InputUserClass) (string, error) {
-	res, err := c.ctx.Raw.UsersGetUsers(c.ctx, []tg.InputUserClass{inputUser})
+func (c *Client) fetchUserName(ctx context.Context, inputUser tg.InputUserClass) (string, error) {
+	res, err := c.ctx.Raw.UsersGetUsers(ctx, []tg.InputUserClass{inputUser})
 	if err != nil {
 		return "", err
 	}
@@ -417,7 +425,7 @@ func (c *Client) fetchUserName(inputUser tg.InputUserClass) (string, error) {
 }
 
 // GetForumTopics fetches all topics from a forum with their unread counts.
-func (c *Client) GetForumTopics(chatID int64) ([]Topic, error) {
+func (c *Client) GetForumTopics(ctx context.Context, chatID int64) ([]Topic, error) {
 	inputPeer, ok := c.peerCache[chatID]
 	if !ok {
 		inputPeer = c.ctx.PeerStorage.GetInputPeerById(chatID)
@@ -426,7 +434,7 @@ func (c *Client) GetForumTopics(chatID int64) ([]Topic, error) {
 		return nil, fmt.Errorf("peer %d not found", chatID)
 	}
 
-	topics, err := c.ctx.Raw.MessagesGetForumTopics(c.ctx, &tg.MessagesGetForumTopicsRequest{
+	topics, err := c.ctx.Raw.MessagesGetForumTopics(ctx, &tg.MessagesGetForumTopicsRequest{
 		Peer:  inputPeer,
 		Limit: 100,
 	})
@@ -452,7 +460,7 @@ func (c *Client) GetForumTopics(chatID int64) ([]Topic, error) {
 }
 
 // GetTopicMessages fetches unread messages from a specific topic.
-func (c *Client) GetTopicMessages(chatID int64, topicID int, lastReadID int) ([]Message, error) {
+func (c *Client) GetTopicMessages(ctx context.Context, chatID int64, topicID int, lastReadID int) ([]Message, error) {
 	inputPeer, ok := c.peerCache[chatID]
 	if !ok {
 		inputPeer = c.ctx.PeerStorage.GetInputPeerById(chatID)
@@ -466,7 +474,7 @@ func (c *Client) GetTopicMessages(chatID int64, topicID int, lastReadID int) ([]
 	batchSize := 100
 
 	for {
-		time.Sleep(1 * time.Second) // Rate limit
+		// Rate limit is handled by middleware
 
 		var msgs []tg.MessageClass
 		var users []tg.UserClass
@@ -478,7 +486,7 @@ func (c *Client) GetTopicMessages(chatID int64, topicID int, lastReadID int) ([]
 				Limit:    batchSize,
 				OffsetID: offsetID,
 			}
-			history, err := c.ctx.Raw.MessagesGetHistory(c.ctx, req)
+			history, err := c.ctx.Raw.MessagesGetHistory(ctx, req)
 			if err != nil {
 				return nil, fmt.Errorf("failed to get history: %w", err)
 			}
@@ -502,7 +510,7 @@ func (c *Client) GetTopicMessages(chatID int64, topicID int, lastReadID int) ([]
 				Limit:    batchSize,
 				OffsetID: offsetID,
 			}
-			replies, err := c.ctx.Raw.MessagesGetReplies(c.ctx, req)
+			replies, err := c.ctx.Raw.MessagesGetReplies(ctx, req)
 			if err != nil {
 				return nil, fmt.Errorf("failed to get topic replies: %w", err)
 			}
@@ -530,7 +538,7 @@ func (c *Client) GetTopicMessages(chatID int64, topicID int, lastReadID int) ([]
 		}
 
 		// Batch resolve missing users to avoid N+1 queries
-		c.resolveMissingUsers(msgs, userMap)
+		c.resolveMissingUsers(ctx, msgs, userMap)
 
 		lastID := 0
 		foundRead := false
@@ -574,7 +582,7 @@ func (c *Client) GetTopicMessages(chatID int64, topicID int, lastReadID int) ([]
 							}
 						}
 					} else {
-						name, err := c.getSenderName(p.UserID)
+						name, err := c.getSenderName(ctx, p.UserID)
 						if err == nil {
 							sender = name
 						}
@@ -608,7 +616,7 @@ func (c *Client) GetTopicMessages(chatID int64, topicID int, lastReadID int) ([]
 }
 
 // MarkTopicAsRead marks a specific topic as read up to the given message ID.
-func (c *Client) MarkTopicAsRead(chatID int64, topicID int, maxID int) error {
+func (c *Client) MarkTopicAsRead(ctx context.Context, chatID int64, topicID int, maxID int) error {
 	inputPeer, ok := c.peerCache[chatID]
 	if !ok {
 		inputPeer = c.ctx.PeerStorage.GetInputPeerById(chatID)
@@ -617,7 +625,7 @@ func (c *Client) MarkTopicAsRead(chatID int64, topicID int, maxID int) error {
 		return fmt.Errorf("peer %d not found", chatID)
 	}
 
-	_, err := c.ctx.Raw.MessagesReadDiscussion(c.ctx, &tg.MessagesReadDiscussionRequest{
+	_, err := c.ctx.Raw.MessagesReadDiscussion(ctx, &tg.MessagesReadDiscussionRequest{
 		Peer:      inputPeer,
 		MsgID:     topicID,
 		ReadMaxID: maxID,
@@ -631,7 +639,7 @@ func (c *Client) MarkTopicAsRead(chatID int64, topicID int, maxID int) error {
 
 // resolveMissingUsers identifies users in the message batch that are missing from the provided userMap
 // and fetches them in a single batch request to avoid N+1 rate limit issues.
-func (c *Client) resolveMissingUsers(msgs []tg.MessageClass, userMap map[int64]tg.UserClass) {
+func (c *Client) resolveMissingUsers(ctx context.Context, msgs []tg.MessageClass, userMap map[int64]tg.UserClass) {
 	var usersToFetch []tg.InputUserClass
 	usersToFetchIDs := make(map[int64]bool)
 
@@ -683,7 +691,7 @@ func (c *Client) resolveMissingUsers(msgs []tg.MessageClass, userMap map[int64]t
 	// Fetch missing users in one go
 	if len(usersToFetch) > 0 {
 		// Use a short timeout context if possible, but for now use existing ctx
-		res, err := c.ctx.Raw.UsersGetUsers(c.ctx, usersToFetch)
+		res, err := c.ctx.Raw.UsersGetUsers(ctx, usersToFetch)
 		if err == nil {
 			for _, u := range res {
 				userMap[u.GetID()] = u
