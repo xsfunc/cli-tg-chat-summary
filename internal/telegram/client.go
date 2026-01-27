@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"sort"
 	"time"
+
+	"github.com/gotd/td/bin"
 
 	"cli-tg-chat-summary/internal/config"
 
@@ -61,23 +64,52 @@ func NewClient(cfg *config.Config) (*Client, error) {
 }
 
 func (c *Client) Login(ctx context.Context, input io.Reader) error {
+	// Configure logger
+	var level slog.Level
+	switch c.cfg.LogLevel {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: level,
+	}))
+	slog.SetDefault(logger)
+
 	// Ensure session directory exists
 	if err := os.MkdirAll("session", 0755); err != nil {
 		return fmt.Errorf("failed to create session directory: %w", err)
+	}
+
+	opts := &gotgproto.ClientOpts{
+		Session:         sessionMaker.SqlSession(sqlite.Open("session/session.db")),
+		AuthConversator: gotgproto.BasicConversator(),
+		Middlewares: []telegram.Middleware{
+			floodwait.NewSimpleWaiter(),
+			ratelimit.New(rate.Every(time.Duration(c.cfg.RateLimitMs)*time.Millisecond), 3),
+		},
+	}
+
+	if c.cfg.LogLevel == "debug" {
+		opts.Middlewares = append(opts.Middlewares, MiddlewareFunc(func(next tg.Invoker) telegram.InvokeFunc {
+			return telegram.InvokeFunc(func(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
+				slog.Debug("TG Request", "method", fmt.Sprintf("%T", input))
+				return next.Invoke(ctx, input, output)
+			})
+		}))
 	}
 
 	client, err := gotgproto.NewClient(
 		c.cfg.TelegramAppID,
 		c.cfg.TelegramAppHash,
 		gotgproto.ClientTypePhone(c.cfg.Phone),
-		&gotgproto.ClientOpts{
-			Session:         sessionMaker.SqlSession(sqlite.Open("session/session.db")),
-			AuthConversator: gotgproto.BasicConversator(),
-			Middlewares: []telegram.Middleware{
-				floodwait.NewSimpleWaiter(),
-				ratelimit.New(rate.Every(100*time.Millisecond), 5),
-			},
-		},
+		opts,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
@@ -954,4 +986,14 @@ func (c *Client) resolveSender(ctx context.Context, fromID tg.PeerClass, userMap
 		sender = "Unknown"
 	}
 	return sender
+}
+
+// Helpers for middleware
+
+// Helpers for middleware
+
+type MiddlewareFunc func(next tg.Invoker) telegram.InvokeFunc
+
+func (m MiddlewareFunc) Handle(next tg.Invoker) telegram.InvokeFunc {
+	return m(next)
 }

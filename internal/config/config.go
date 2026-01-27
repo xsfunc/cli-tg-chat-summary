@@ -14,6 +14,8 @@ type Config struct {
 	TelegramAppID   int
 	TelegramAppHash string
 	Phone           string
+	LogLevel        string
+	RateLimitMs     int
 }
 
 // Load reads configuration from environment variables.
@@ -35,9 +37,24 @@ func Load() (*Config, error) {
 		return nil, errors.New("TG_APP_HASH environment variable is required")
 	}
 
+	logLevel := os.Getenv("LOG_LEVEL")
+	if logLevel == "" {
+		logLevel = "info"
+	}
+
+	rateLimitStr := os.Getenv("RATE_LIMIT_MS")
+	rateLimit := 350 // Default safe limit
+	if rateLimitStr != "" {
+		if r, err := strconv.Atoi(rateLimitStr); err == nil {
+			rateLimit = r
+		}
+	}
+
 	return &Config{
 		TelegramAppID:   appID,
 		TelegramAppHash: appHash,
 		Phone:           os.Getenv("TG_PHONE"),
+		LogLevel:        logLevel,
+		RateLimitMs:     rateLimit,
 	}, nil
 }
