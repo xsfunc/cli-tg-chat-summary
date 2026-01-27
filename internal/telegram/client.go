@@ -74,7 +74,7 @@ func (c *Client) Login(ctx context.Context, input io.Reader) error {
 			Session:         sessionMaker.SqlSession(sqlite.Open("session/session.db")),
 			AuthConversator: gotgproto.BasicConversator(),
 			Middlewares: []telegram.Middleware{
-				floodwait.NewWaiter(),
+				floodwait.NewSimpleWaiter(),
 				ratelimit.New(rate.Every(100*time.Millisecond), 5),
 			},
 		},
