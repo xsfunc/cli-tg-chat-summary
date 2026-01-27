@@ -248,6 +248,9 @@ func (c *Client) GetUnreadMessages(chatID int64, lastReadID int) ([]Message, err
 			userMap[u.GetID()] = u
 		}
 
+		// Batch resolve missing users to avoid N+1 queries
+		c.resolveMissingUsers(msgs, userMap)
+
 		lastID := 0
 		foundRead := false
 
@@ -526,6 +529,9 @@ func (c *Client) GetTopicMessages(chatID int64, topicID int, lastReadID int) ([]
 			userMap[u.GetID()] = u
 		}
 
+		// Batch resolve missing users to avoid N+1 queries
+		c.resolveMissingUsers(msgs, userMap)
+
 		lastID := 0
 		foundRead := false
 
@@ -621,4 +627,67 @@ func (c *Client) MarkTopicAsRead(chatID int64, topicID int, maxID int) error {
 	}
 
 	return nil
+}
+
+// resolveMissingUsers identifies users in the message batch that are missing from the provided userMap
+// and fetches them in a single batch request to avoid N+1 rate limit issues.
+func (c *Client) resolveMissingUsers(msgs []tg.MessageClass, userMap map[int64]tg.UserClass) {
+	var usersToFetch []tg.InputUserClass
+	usersToFetchIDs := make(map[int64]bool)
+
+	for _, m := range msgs {
+		msg, ok := m.(*tg.Message)
+		if !ok || msg.Out || msg.FromID == nil {
+			continue
+		}
+
+		var userID int64
+		if p, ok := msg.FromID.(*tg.PeerUser); ok {
+			userID = p.UserID
+		} else {
+			continue
+		}
+
+		// If user is not in map, queue for fetching
+		if _, found := userMap[userID]; !found {
+			if !usersToFetchIDs[userID] {
+				usersToFetchIDs[userID] = true
+
+				// Try to construct InputUser from cache or storage
+				var inputUser tg.InputUserClass
+
+				// 1. Try Cache
+				if ip, ok := c.peerCache[userID]; ok {
+					if uPeer, ok := ip.(*tg.InputPeerUser); ok {
+						inputUser = &tg.InputUser{UserID: uPeer.UserID, AccessHash: uPeer.AccessHash}
+					}
+				}
+
+				// 2. Try Storage if cache failed
+				if inputUser == nil {
+					ip := c.ctx.PeerStorage.GetInputPeerById(userID)
+					if ip != nil {
+						if uPeer, ok := ip.(*tg.InputPeerUser); ok {
+							inputUser = &tg.InputUser{UserID: uPeer.UserID, AccessHash: uPeer.AccessHash}
+						}
+					}
+				}
+
+				if inputUser != nil {
+					usersToFetch = append(usersToFetch, inputUser)
+				}
+			}
+		}
+	}
+
+	// Fetch missing users in one go
+	if len(usersToFetch) > 0 {
+		// Use a short timeout context if possible, but for now use existing ctx
+		res, err := c.ctx.Raw.UsersGetUsers(c.ctx, usersToFetch)
+		if err == nil {
+			for _, u := range res {
+				userMap[u.GetID()] = u
+			}
+		}
+	}
 }
