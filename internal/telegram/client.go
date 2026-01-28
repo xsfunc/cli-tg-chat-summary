@@ -33,12 +33,13 @@ type Client struct {
 }
 
 type Chat struct {
-	ID          int64
-	Title       string
-	UnreadCount int
-	IsChannel   bool
-	IsForum     bool
-	LastReadID  int
+	ID           int64
+	Title        string
+	UnreadCount  int
+	IsChannel    bool
+	IsForum      bool
+	LastReadID   int
+	TopMessageID int
 }
 
 type Topic struct {
@@ -222,12 +223,13 @@ func (c *Client) processDialogs(dialogs []tg.DialogClass, chats []tg.ChatClass, 
 		}
 
 		results = append(results, Chat{
-			ID:          peerID,
-			Title:       title,
-			UnreadCount: dlg.UnreadCount,
-			IsChannel:   isChannel,
-			IsForum:     isForum,
-			LastReadID:  dlg.ReadInboxMaxID,
+			ID:           peerID,
+			Title:        title,
+			UnreadCount:  dlg.UnreadCount,
+			IsChannel:    isChannel,
+			IsForum:      isForum,
+			LastReadID:   dlg.ReadInboxMaxID,
+			TopMessageID: dlg.TopMessage,
 		})
 	}
 	return results

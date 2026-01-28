@@ -52,7 +52,18 @@ func (a *App) Run(ctx context.Context, opts RunOptions) error {
 	}
 
 	// Start TUI
-	model := tui.NewModel(chats)
+	markReadFunc := func(chat telegram.Chat) error {
+		if chat.IsForum {
+			return fmt.Errorf("marking forums as read is not supported yet")
+		}
+		// Use TopMessageID to mark everything up to that message as read
+		if chat.TopMessageID == 0 {
+			return fmt.Errorf("no top message id found")
+		}
+		return a.tgClient.MarkAsRead(ctx, chat, chat.TopMessageID)
+	}
+
+	model := tui.NewModel(chats, markReadFunc)
 	p := tea.NewProgram(model)
 	finalModel, err := p.Run()
 	if err != nil {

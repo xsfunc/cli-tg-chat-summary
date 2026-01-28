@@ -5,8 +5,11 @@ import (
 	"io"
 	"strings"
 
+	"time"
+
 	"cli-tg-chat-summary/internal/telegram"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -51,12 +54,16 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 }
 
 type Model struct {
-	list     list.Model
-	selected *telegram.Chat
-	quitting bool
+	list         list.Model
+	selected     *telegram.Chat
+	quitting     bool
+	markReadFunc func(telegram.Chat) error
+	statusMsg    string
 }
 
-func NewModel(chats []telegram.Chat) Model {
+type statusClearMsg struct{}
+
+func NewModel(chats []telegram.Chat, markReadFunc func(telegram.Chat) error) Model {
 	items := make([]list.Item, len(chats))
 	for i, chat := range chats {
 		items[i] = item{chat: chat}
@@ -73,7 +80,27 @@ func NewModel(chats []telegram.Chat) Model {
 	l.Styles.PaginationStyle = paginationStyle
 	l.Styles.HelpStyle = helpStyle
 
-	return Model{list: l}
+	l.Styles.HelpStyle = helpStyle
+
+	// Add more help keys
+	l.AdditionalFullHelpKeys = func() []key.Binding {
+		return []key.Binding{
+			key.NewBinding(
+				key.WithKeys("ctrl+r"),
+				key.WithHelp("ctrl+r", "mark read"),
+			),
+		}
+	}
+	l.AdditionalShortHelpKeys = func() []key.Binding {
+		return []key.Binding{
+			key.NewBinding(
+				key.WithKeys("ctrl+r"),
+				key.WithHelp("^r", "mark read"),
+			),
+		}
+	}
+
+	return Model{list: l, markReadFunc: markReadFunc}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -107,7 +134,47 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selected = &i.chat
 			}
 			return m, tea.Quit
+
+		case "ctrl+r":
+			if m.list.FilterState() == list.Filtering {
+				// Don't intercept if filtering (though ctrl+r is unlikely to be typed text everywhere, but better safe)
+				// Actually ctrl+r is usually safe.
+				// But let's keep it safe.
+				break
+			}
+			if m.markReadFunc == nil {
+				m.statusMsg = "Error: Mark as read not implemented"
+				return m, nil
+			}
+
+			i, ok := m.list.SelectedItem().(item)
+			if ok {
+				err := m.markReadFunc(i.chat)
+				if err != nil {
+					m.statusMsg = fmt.Sprintf("Error: %v", err)
+				} else {
+					m.statusMsg = fmt.Sprintf("Marked %s as read", i.chat.Title)
+
+					// Update the item in the list directly to show 0 unread
+					idx := m.list.Index()
+					newChat := i.chat
+					newChat.UnreadCount = 0
+
+					// Update the items list
+					items := m.list.Items()
+					items[idx] = item{chat: newChat}
+					m.list.SetItems(items)
+				}
+				// Clear status after 2 seconds
+				return m, tea.Tick(2*time.Second, func(_ time.Time) tea.Msg {
+					return statusClearMsg{}
+				})
+			}
 		}
+
+	case statusClearMsg:
+		m.statusMsg = ""
+		return m, nil
 	}
 
 	var cmd tea.Cmd
@@ -122,7 +189,12 @@ func (m Model) View() string {
 	if m.selected != nil {
 		return quitTextStyle.Render(fmt.Sprintf("Selected: %s", m.selected.Title))
 	}
-	return m.list.View()
+
+	view := m.list.View()
+	if m.statusMsg != "" {
+		view += "\n" + quitTextStyle.Foreground(lipgloss.Color("62")).Render(m.statusMsg)
+	}
+	return view
 }
 
 func (m Model) GetSelected() *telegram.Chat {
