@@ -1,4 +1,4 @@
-.PHONY: build run clean lint setup-hooks
+.PHONY: build run clean lint test test-cover setup-hooks
 
 APP_NAME=tg-summary
 
@@ -13,6 +13,14 @@ clean:
 
 lint:
 	golangci-lint run
+
+test:
+	go test ./... -v
+
+test-cover:
+	go test ./... -coverprofile=coverage.out
+	go tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report: coverage.html"
 
 setup-hooks:
 	@echo "Setting up git hooks..."

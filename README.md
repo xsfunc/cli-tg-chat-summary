@@ -67,4 +67,7 @@ internal/
 - `make build` - Build binary
 - `make run` - Run without building
 - `make lint` - Run linter
+- `make test` - Run all tests
+- `make test-cover` - Run tests with coverage report
 - `make clean` - Clean build artifacts
+
