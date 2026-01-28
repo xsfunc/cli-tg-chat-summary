@@ -253,7 +253,6 @@ func (c *Client) GetUnreadMessages(ctx context.Context, chatID int64, lastReadID
 	// Check loop: fetch until we find messages <= lastReadID OR end of history
 	for {
 		// Rate limit is handled by middleware
-
 		req := &tg.MessagesGetHistoryRequest{
 			Peer:     inputPeer,
 			Limit:    batchSize,
@@ -265,98 +264,28 @@ func (c *Client) GetUnreadMessages(ctx context.Context, chatID int64, lastReadID
 			return nil, fmt.Errorf("failed to get history: %w", err)
 		}
 
-		var msgs []tg.MessageClass
-		var users []tg.UserClass
-
-		switch h := history.(type) {
-		case *tg.MessagesMessages:
-			msgs = h.Messages
-			users = h.Users
-		case *tg.MessagesMessagesSlice:
-			msgs = h.Messages
-			users = h.Users
-		case *tg.MessagesChannelMessages:
-			msgs = h.Messages
-			users = h.Users
-		}
-
+		msgs, users := extractMessagesAndUsers(history)
 		if len(msgs) == 0 {
 			break
 		}
 
-		// Map users for quick lookup
-		userMap := make(map[int64]tg.UserClass)
-		for _, u := range users {
-			userMap[u.GetID()] = u
-		}
-
-		// Batch resolve missing users to avoid N+1 queries
-		c.resolveMissingUsers(ctx, msgs, userMap)
-
-		lastID := 0
-		foundRead := false
-
-		for _, m := range msgs {
-			msg, ok := m.(*tg.Message)
-			if !ok {
-				continue
-			}
-			lastID = msg.ID
-
-			// Stop if we reached the last read message
+		batchMessages, lastID, stop := c.processMessageBatch(ctx, msgs, users, func(msg *tg.Message) (bool, bool) {
 			if msg.ID <= lastReadID {
-				foundRead = true
-				break // Stop processing this batch
+				return false, true // Stop
 			}
-
-			if msg.Message == "" {
-				continue
+			if msg.Message == "" || msg.Out {
+				return false, false // Skip
 			}
+			return true, false // Process
+		})
 
-			if msg.Out {
-				continue
-			}
+		allMessages = append(allMessages, batchMessages...)
 
-			sender := "Unknown"
-			if msg.FromID != nil {
-				switch p := msg.FromID.(type) {
-				case *tg.PeerUser:
-					// Try local batch map first
-					if u, ok := userMap[p.UserID]; ok {
-						switch user := u.(type) {
-						case *tg.User:
-							sender = user.FirstName + " " + user.LastName
-							if sender == " " {
-								sender = "Deleted Account"
-							}
-						}
-					} else {
-						// Fallback to general resolution
-						name, err := c.getSenderName(ctx, p.UserID)
-						if err == nil {
-							sender = name
-						}
-					}
-				}
-			}
-			if sender == " " || sender == "" {
-				sender = "Unknown"
-			}
-
-			allMessages = append(allMessages, Message{
-				ID:     msg.ID,
-				Date:   time.Unix(int64(msg.Date), 0),
-				Text:   msg.Message,
-				Sender: sender,
-			})
-		}
-
-		if foundRead {
+		if stop {
 			break
 		}
 
 		offsetID = lastID
-
 		if len(msgs) < batchSize {
 			break
 		}
@@ -509,7 +438,6 @@ func (c *Client) GetTopicMessages(ctx context.Context, chatID int64, topicID int
 
 	for {
 		// Rate limit is handled by middleware
-
 		var msgs []tg.MessageClass
 		var users []tg.UserClass
 
@@ -524,18 +452,7 @@ func (c *Client) GetTopicMessages(ctx context.Context, chatID int64, topicID int
 			if err != nil {
 				return nil, fmt.Errorf("failed to get history: %w", err)
 			}
-
-			switch h := history.(type) {
-			case *tg.MessagesMessages:
-				msgs = h.Messages
-				users = h.Users
-			case *tg.MessagesMessagesSlice:
-				msgs = h.Messages
-				users = h.Users
-			case *tg.MessagesChannelMessages:
-				msgs = h.Messages
-				users = h.Users
-			}
+			msgs, users = extractMessagesAndUsers(history)
 		} else {
 			// Non-general topic - use GetReplies
 			req := &tg.MessagesGetRepliesRequest{
@@ -548,99 +465,40 @@ func (c *Client) GetTopicMessages(ctx context.Context, chatID int64, topicID int
 			if err != nil {
 				return nil, fmt.Errorf("failed to get topic replies: %w", err)
 			}
-
-			switch r := replies.(type) {
-			case *tg.MessagesMessages:
-				msgs = r.Messages
-				users = r.Users
-			case *tg.MessagesMessagesSlice:
-				msgs = r.Messages
-				users = r.Users
-			case *tg.MessagesChannelMessages:
-				msgs = r.Messages
-				users = r.Users
-			}
+			msgs, users = extractMessagesAndUsers(replies)
 		}
 
 		if len(msgs) == 0 {
 			break
 		}
 
-		userMap := make(map[int64]tg.UserClass)
-		for _, u := range users {
-			userMap[u.GetID()] = u
-		}
-
-		// Batch resolve missing users to avoid N+1 queries
-		c.resolveMissingUsers(ctx, msgs, userMap)
-
-		lastID := 0
-		foundRead := false
-
-		for _, m := range msgs {
-			msg, ok := m.(*tg.Message)
-			if !ok {
-				continue
-			}
-
+		batchMessages, lastID, stop := c.processMessageBatch(ctx, msgs, users, func(msg *tg.Message) (bool, bool) {
 			// For General topic, filter to only include messages without ReplyTo or with top_msg_id=0
 			if topicID == 1 {
 				if msg.ReplyTo != nil {
 					if reply, ok := msg.ReplyTo.(*tg.MessageReplyHeader); ok && reply.ReplyToTopID != 0 {
-						continue // This message belongs to another topic
+						return false, false // Skip message belonging to another topic
 					}
 				}
 			}
 
-			lastID = msg.ID
-
 			if msg.ID <= lastReadID {
-				foundRead = true
-				break
+				return false, true // Stop
 			}
 
 			if msg.Message == "" || msg.Out {
-				continue
+				return false, false // Skip
 			}
+			return true, false // Process
+		})
 
-			sender := "Unknown"
-			if msg.FromID != nil {
-				switch p := msg.FromID.(type) {
-				case *tg.PeerUser:
-					if u, ok := userMap[p.UserID]; ok {
-						switch user := u.(type) {
-						case *tg.User:
-							sender = user.FirstName + " " + user.LastName
-							if sender == " " {
-								sender = "Deleted Account"
-							}
-						}
-					} else {
-						name, err := c.getSenderName(ctx, p.UserID)
-						if err == nil {
-							sender = name
-						}
-					}
-				}
-			}
-			if sender == " " || sender == "" {
-				sender = "Unknown"
-			}
+		allMessages = append(allMessages, batchMessages...)
 
-			allMessages = append(allMessages, Message{
-				ID:     msg.ID,
-				Date:   time.Unix(int64(msg.Date), 0),
-				Text:   msg.Message,
-				Sender: sender,
-			})
-		}
-
-		if foundRead {
+		if stop {
 			break
 		}
 
 		offsetID = lastID
-
 		if len(msgs) < batchSize {
 			break
 		}
@@ -760,68 +618,32 @@ func (c *Client) GetMessagesByDate(ctx context.Context, chatID int64, since, unt
 			return nil, fmt.Errorf("failed to get history: %w", err)
 		}
 
-		var msgs []tg.MessageClass
-		var users []tg.UserClass
-
-		switch h := history.(type) {
-		case *tg.MessagesMessages:
-			msgs = h.Messages
-			users = h.Users
-		case *tg.MessagesMessagesSlice:
-			msgs = h.Messages
-			users = h.Users
-		case *tg.MessagesChannelMessages:
-			msgs = h.Messages
-			users = h.Users
-		}
-
+		msgs, users := extractMessagesAndUsers(history)
 		if len(msgs) == 0 {
 			break
 		}
 
-		userMap := make(map[int64]tg.UserClass)
-		for _, u := range users {
-			userMap[u.GetID()] = u
-		}
-		c.resolveMissingUsers(ctx, msgs, userMap)
-
-		lastID := 0
-		tooOld := false
-
-		for _, m := range msgs {
-			msg, ok := m.(*tg.Message)
-			if !ok {
-				continue
-			}
-			lastID = msg.ID
-
+		batchMessages, lastID, stop := c.processMessageBatch(ctx, msgs, users, func(msg *tg.Message) (bool, bool) {
 			msgTime := time.Unix(int64(msg.Date), 0)
 
 			// Messages are newest first
 			if msgTime.Before(since) {
-				tooOld = true
-				break
+				return false, true // Stop (tooOld)
 			}
 
 			if msgTime.After(until) {
-				continue
+				return false, false // Skip (tooNew)
 			}
 
 			if msg.Message == "" || msg.Out {
-				continue
+				return false, false // Skip
 			}
+			return true, false // Process
+		})
 
-			sender := c.resolveSender(ctx, msg.FromID, userMap)
+		allMessages = append(allMessages, batchMessages...)
 
-			allMessages = append(allMessages, Message{
-				ID:     msg.ID,
-				Date:   msgTime,
-				Text:   msg.Message,
-				Sender: sender,
-			})
-		}
-
-		if tooOld {
+		if stop {
 			break
 		}
 
@@ -862,17 +684,7 @@ func (c *Client) GetTopicMessagesByDate(ctx context.Context, chatID int64, topic
 			if err != nil {
 				return nil, fmt.Errorf("failed to get history: %w", err)
 			}
-			switch h := history.(type) {
-			case *tg.MessagesMessages:
-				msgs = h.Messages
-				users = h.Users
-			case *tg.MessagesMessagesSlice:
-				msgs = h.Messages
-				users = h.Users
-			case *tg.MessagesChannelMessages:
-				msgs = h.Messages
-				users = h.Users
-			}
+			msgs, users = extractMessagesAndUsers(history)
 		} else {
 			req := &tg.MessagesGetRepliesRequest{
 				Peer:     inputPeer,
@@ -884,73 +696,41 @@ func (c *Client) GetTopicMessagesByDate(ctx context.Context, chatID int64, topic
 			if err != nil {
 				return nil, fmt.Errorf("failed to get topic replies: %w", err)
 			}
-			switch r := replies.(type) {
-			case *tg.MessagesMessages:
-				msgs = r.Messages
-				users = r.Users
-			case *tg.MessagesMessagesSlice:
-				msgs = r.Messages
-				users = r.Users
-			case *tg.MessagesChannelMessages:
-				msgs = r.Messages
-				users = r.Users
-			}
+			msgs, users = extractMessagesAndUsers(replies)
 		}
 
 		if len(msgs) == 0 {
 			break
 		}
 
-		userMap := make(map[int64]tg.UserClass)
-		for _, u := range users {
-			userMap[u.GetID()] = u
-		}
-		c.resolveMissingUsers(ctx, msgs, userMap)
-
-		lastID := 0
-		tooOld := false
-
-		for _, m := range msgs {
-			msg, ok := m.(*tg.Message)
-			if !ok {
-				continue
-			}
-
+		batchMessages, lastID, stop := c.processMessageBatch(ctx, msgs, users, func(msg *tg.Message) (bool, bool) {
 			if topicID == 1 {
 				if msg.ReplyTo != nil {
 					if reply, ok := msg.ReplyTo.(*tg.MessageReplyHeader); ok && reply.ReplyToTopID != 0 {
-						continue
+						return false, false
 					}
 				}
 			}
 
-			lastID = msg.ID
 			msgTime := time.Unix(int64(msg.Date), 0)
 
 			if msgTime.Before(since) {
-				tooOld = true
-				break
+				return false, true // Stop (tooOld)
 			}
 
 			if msgTime.After(until) {
-				continue
+				return false, false // Skip (tooNew)
 			}
 
 			if msg.Message == "" || msg.Out {
-				continue
+				return false, false // Skip
 			}
+			return true, false // Process
+		})
 
-			sender := c.resolveSender(ctx, msg.FromID, userMap)
+		allMessages = append(allMessages, batchMessages...)
 
-			allMessages = append(allMessages, Message{
-				ID:     msg.ID,
-				Date:   msgTime,
-				Text:   msg.Message,
-				Sender: sender,
-			})
-		}
-
-		if tooOld {
+		if stop {
 			break
 		}
 
@@ -988,6 +768,60 @@ func (c *Client) resolveSender(ctx context.Context, fromID tg.PeerClass, userMap
 		sender = "Unknown"
 	}
 	return sender
+}
+
+func extractMessagesAndUsers(result tg.MessagesMessagesClass) ([]tg.MessageClass, []tg.UserClass) {
+	switch r := result.(type) {
+	case *tg.MessagesMessages:
+		return r.Messages, r.Users
+	case *tg.MessagesMessagesSlice:
+		return r.Messages, r.Users
+	case *tg.MessagesChannelMessages:
+		return r.Messages, r.Users
+	}
+	return nil, nil
+}
+
+func (c *Client) processMessageBatch(ctx context.Context, msgs []tg.MessageClass, users []tg.UserClass,
+	filter func(msg *tg.Message) (process bool, stop bool)) ([]Message, int, bool) {
+
+	userMap := make(map[int64]tg.UserClass)
+	for _, u := range users {
+		userMap[u.GetID()] = u
+	}
+
+	c.resolveMissingUsers(ctx, msgs, userMap)
+
+	var results []Message
+	var lastID int
+	var stopLoop bool
+
+	for _, m := range msgs {
+		msg, ok := m.(*tg.Message)
+		if !ok {
+			continue
+		}
+
+		lastID = msg.ID
+
+		process, stop := filter(msg)
+		if stop {
+			stopLoop = true
+			break
+		}
+		if !process {
+			continue
+		}
+
+		sender := c.resolveSender(ctx, msg.FromID, userMap)
+		results = append(results, Message{
+			ID:     msg.ID,
+			Date:   time.Unix(int64(msg.Date), 0),
+			Text:   msg.Message,
+			Sender: sender,
+		})
+	}
+	return results, lastID, stopLoop
 }
 
 // Helpers for middleware
