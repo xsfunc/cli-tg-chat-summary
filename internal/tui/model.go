@@ -47,7 +47,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 		}
 	}
 
-	fmt.Fprint(w, fn(str))
+	_, _ = fmt.Fprint(w, fn(str))
 }
 
 type Model struct {
@@ -162,7 +162,7 @@ func (d topicItemDelegate) Render(w io.Writer, m list.Model, index int, listItem
 		}
 	}
 
-	fmt.Fprint(w, fn(str))
+	_, _ = fmt.Fprint(w, fn(str))
 }
 
 func NewTopicModel(topics []telegram.Topic) TopicModel {

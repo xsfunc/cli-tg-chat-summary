@@ -187,11 +187,21 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to create file: %v", err)
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			log.Printf("failed to close file: %v", err)
+		}
+	}()
 
-	fmt.Fprintf(f, "Chat Summary: %s\n", exportTitle)
-	fmt.Fprintf(f, "Export Date: %s\n", time.Now().Format(time.RFC1123))
-	fmt.Fprintf(f, "Total Messages: %d\n\n", len(messages))
+	if _, err := fmt.Fprintf(f, "Chat Summary: %s\n", exportTitle); err != nil {
+		log.Printf("failed to write header: %v", err)
+	}
+	if _, err := fmt.Fprintf(f, "Export Date: %s\n", time.Now().Format(time.RFC1123)); err != nil {
+		log.Printf("failed to write date: %v", err)
+	}
+	if _, err := fmt.Fprintf(f, "Total Messages: %d\n\n", len(messages)); err != nil {
+		log.Printf("failed to write count: %v", err)
+	}
 
 	// Sort messages by date (oldest first)
 	// fetched messages are usually newest first from history?
@@ -204,7 +214,9 @@ func main() {
 	}
 
 	for _, msg := range messages {
-		fmt.Fprintf(f, "[%s] %s: %s\n", msg.Date.Format("15:04"), msg.Sender, strings.TrimSpace(msg.Text))
+		if _, err := fmt.Fprintf(f, "[%s] %s: %s\n", msg.Date.Format("15:04"), msg.Sender, strings.TrimSpace(msg.Text)); err != nil {
+			log.Printf("failed to write message: %v", err)
+		}
 	}
 
 	fmt.Printf("Successfully exported %d messages to %s\n", len(messages), filename)

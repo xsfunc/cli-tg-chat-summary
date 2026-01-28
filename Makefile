@@ -1,4 +1,4 @@
-.PHONY: build run clean lint
+.PHONY: build run clean lint setup-hooks
 
 APP_NAME=tg-summary
 
@@ -13,3 +13,9 @@ clean:
 
 lint:
 	golangci-lint run
+
+setup-hooks:
+	@echo "Setting up git hooks..."
+	@chmod +x .git/hooks/pre-commit .git/hooks/pre-push
+	@echo "✅ Git hooks installed successfully!"
+	@echo "Run 'make lint' to test manually."
