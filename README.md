@@ -64,10 +64,20 @@ internal/
 
 ## Development
 
-- `make build` - Build binary
-- `make run` - Run without building
-- `make lint` - Run linter
-- `make test` - Run all tests
-- `make test-cover` - Run tests with coverage report
-- `make clean` - Clean build artifacts
+| Command | Description |
+|---------|-------------|
+| `make` | Show help with all available commands |
+| `make all` | Full cycle: tidy, lint, test, build |
+| `make ci` | CI pipeline: clean build from scratch |
+| `make build` | Compile binary to `bin/` directory |
+| `make install` | Install to `$GOPATH/bin` |
+| `make run` | Run via `go run` (example: `make run ARGS="-since 24h"`) |
+| `make exec` | Build and run binary |
+| `make clean` | Clean build artifacts |
+| `make tidy` | Update dependencies (`go mod tidy`) |
+| `make lint` | Run golangci-lint |
+| `make test` | Run unit tests |
+| `make test-nocache` | Run tests without cache |
+| `make test-cover` | Run tests with coverage report |
+| `make setup-hooks` | Install git hooks |
 

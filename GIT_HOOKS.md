@@ -17,7 +17,13 @@ This project uses Git hooks to ensure code quality before commits and pushes.
 
 ## Setup for New Contributors
 
-After cloning the repository, hooks are already in place. However, ensure they are executable:
+After cloning the repository, run:
+
+```bash
+make setup-hooks
+```
+
+This will ensure all hooks are executable. Alternatively:
 
 ```bash
 chmod +x .git/hooks/pre-commit .git/hooks/pre-push
