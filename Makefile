@@ -13,10 +13,17 @@ COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "undefined")
 .PHONY: all
 all: tidy lint test build ## Full cycle: deps, lint, test, build
 
+.PHONY: ci
+ci: clean all ## CI pipeline: clean build from scratch
+
 .PHONY: build
 build: ## Compile binary to bin/ directory
 	@echo "Building $(APP_NAME) (commit: $(COMMIT))..."
 	go build -ldflags "-X main.version=$(COMMIT)" -o bin/$(APP_NAME) ./cmd/tg-summary
+
+.PHONY: install
+install: ## Install to $GOPATH/bin
+	go install -ldflags "-X main.version=$(COMMIT)" ./cmd/tg-summary
 
 .PHONY: run
 run: ## Run application via go run (example: make run ARGS="-since 24h")
@@ -45,7 +52,11 @@ lint: ## Run golangci-lint
 
 .PHONY: test
 test: ## Run unit tests
-	go test ./... -v -race
+	go test ./... -v
+
+.PHONY: test-nocache
+test-nocache: ## Run tests without cache
+	go test ./... -v -count=1
 
 .PHONY: test-cover
 test-cover: ## Run tests with coverage report
@@ -60,9 +71,10 @@ test-cover: ## Run tests with coverage report
 .PHONY: setup-hooks
 setup-hooks: ## Install git hooks
 	@echo "Setting up git hooks..."
-	@chmod +x .git/hooks/pre-commit .git/hooks/pre-push 2>/dev/null || echo "Scripts not found, skipping chmod"
-	@echo "✅ Git hooks installed successfully!"
+	@test -f .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit || true
+	@test -f .git/hooks/pre-push && chmod +x .git/hooks/pre-push || true
+	@echo "✅ Git hooks configured"
 
 .PHONY: help
 help: ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
