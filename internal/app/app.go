@@ -157,9 +157,15 @@ func (a *App) Run(ctx context.Context, opts RunOptions) error {
 
 	// Export to file
 	// format: ChatName_Date.txt or ChatName_TopicName_Date.txt
+	// date range format: ChatName_YYYY-MM-DD_to_YYYY-MM-DD.txt
 	cleanName := sanitizeFilename(exportTitle)
-	dateStr := time.Now().Format("2006-01-02")
-	filename := fmt.Sprintf("exports/%s_%s.txt", cleanName, dateStr)
+	var suffix string
+	if opts.UseDateRange {
+		suffix = fmt.Sprintf("%s_to_%s", opts.Since.Format("2006-01-02"), opts.Until.Format("2006-01-02"))
+	} else {
+		suffix = time.Now().Format("2006-01-02")
+	}
+	filename := fmt.Sprintf("exports/%s_%s.txt", cleanName, suffix)
 
 	// Ensure exports directory exists
 	cwd, _ := os.Getwd()

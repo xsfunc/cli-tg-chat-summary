@@ -69,7 +69,7 @@ When using date range mode, messages will NOT be marked as read.
 1. Authenticate with Telegram using `gotgproto`.
 2. Fetch dialogs and show them in a TUI list (Bubble Tea).
 3. If the selected chat is a forum, show a second TUI to select a topic.
-4. Export messages to `exports/<Chat_or_Topic>_<YYYY-MM-DD>.txt`.
+4. Export messages to `exports/<Chat_or_Topic>_<YYYY-MM-DD>.txt` (or `exports/<Chat_or_Topic>_<YYYY-MM-DD>_to_<YYYY-MM-DD>.txt` for date ranges).
 5. In unread mode, mark messages as read up to the max exported ID.
 
 ## Configuration
