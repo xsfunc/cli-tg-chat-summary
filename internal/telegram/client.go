@@ -634,10 +634,19 @@ func (c *Client) GetMessagesByDate(ctx context.Context, chatID int64, since, unt
 	batchSize := 100
 
 	for {
+		offsetDate := 0
+		if offsetID == 0 && !until.IsZero() {
+			// Jump close to the end of the requested range, then page backwards.
+			offsetDate = int(until.Unix())
+			reportProgress(progress, ProgressUpdate{
+				Phase: fmt.Sprintf("jumped to date %s", until.Format("2006-01-02")),
+			})
+		}
 		req := &tg.MessagesGetHistoryRequest{
 			Peer:     inputPeer,
 			Limit:    batchSize,
 			OffsetID: offsetID,
+			OffsetDate: offsetDate,
 		}
 
 		history, err := c.ctx.Raw.MessagesGetHistory(ctx, req)
@@ -708,10 +717,19 @@ func (c *Client) GetTopicMessagesByDate(ctx context.Context, chatID int64, topic
 		var users []tg.UserClass
 
 		if topicID == 1 {
+			offsetDate := 0
+			if offsetID == 0 && !until.IsZero() {
+				// Jump close to the end of the requested range, then page backwards.
+				offsetDate = int(until.Unix())
+				reportProgress(progress, ProgressUpdate{
+					Phase: fmt.Sprintf("jumped to date %s", until.Format("2006-01-02")),
+				})
+			}
 			req := &tg.MessagesGetHistoryRequest{
 				Peer:     inputPeer,
 				Limit:    batchSize,
 				OffsetID: offsetID,
+				OffsetDate: offsetDate,
 			}
 			history, err := c.ctx.Raw.MessagesGetHistory(ctx, req)
 			if err != nil {
@@ -719,11 +737,20 @@ func (c *Client) GetTopicMessagesByDate(ctx context.Context, chatID int64, topic
 			}
 			msgs, users = extractMessagesAndUsers(history)
 		} else {
+			offsetDate := 0
+			if offsetID == 0 && !until.IsZero() {
+				// Jump close to the end of the requested range, then page backwards.
+				offsetDate = int(until.Unix())
+				reportProgress(progress, ProgressUpdate{
+					Phase: fmt.Sprintf("jumped to date %s", until.Format("2006-01-02")),
+				})
+			}
 			req := &tg.MessagesGetRepliesRequest{
 				Peer:     inputPeer,
 				MsgID:    topicID,
 				Limit:    batchSize,
 				OffsetID: offsetID,
+				OffsetDate: offsetDate,
 			}
 			replies, err := c.ctx.Raw.MessagesGetReplies(ctx, req)
 			if err != nil {
