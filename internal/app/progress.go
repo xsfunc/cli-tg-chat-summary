@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 
 	"cli-tg-chat-summary/internal/telegram"
@@ -14,12 +15,22 @@ type fetchResult struct {
 	err      error
 }
 
-func (a *App) fetchWithProgress(title string, fetch func(telegram.ProgressFunc) ([]telegram.Message, error)) ([]telegram.Message, error) {
+type FetchOpts struct {
+	Ctx   context.Context
+	Title string
+}
+
+func (a *App) fetchWithProgress(opts FetchOpts, fetch func(context.Context, telegram.ProgressFunc) ([]telegram.Message, error)) ([]telegram.Message, error) {
 	msgCh := make(chan tea.Msg, 128)
 	resultCh := make(chan fetchResult, 1)
+	fetchCtx, cancel := context.WithCancel(opts.Ctx)
+	defer cancel()
 
 	go func() {
 		progressFn := func(update telegram.ProgressUpdate) {
+			if fetchCtx.Err() != nil {
+				return
+			}
 			select {
 			case msgCh <- tui.ProgressMsg{
 				Phase:   update.Phase,
@@ -31,17 +42,19 @@ func (a *App) fetchWithProgress(title string, fetch func(telegram.ProgressFunc) 
 			}
 		}
 
-		messages, err := fetch(progressFn)
+		messages, err := fetch(fetchCtx, progressFn)
 		resultCh <- fetchResult{messages: messages, err: err}
 		close(msgCh)
 	}()
 
-	model := tui.NewProgressModel(title, msgCh)
+	model := tui.NewProgressModel(opts.Title, msgCh)
 	p := tea.NewProgram(model)
 	if _, err := p.Run(); err != nil {
+		cancel()
 		return nil, fmt.Errorf("failed to run progress TUI: %w", err)
 	}
 
+	cancel()
 	result := <-resultCh
 	return result.messages, result.err
 }
