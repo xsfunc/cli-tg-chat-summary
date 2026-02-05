@@ -56,6 +56,21 @@ type Message struct {
 	Sender string
 }
 
+type ProgressUpdate struct {
+	Phase   string
+	Parsed  int
+	Scanned int
+	Batch   int
+}
+
+type ProgressFunc func(ProgressUpdate)
+
+func reportProgress(progress ProgressFunc, update ProgressUpdate) {
+	if progress != nil {
+		progress(update)
+	}
+}
+
 func NewClient(cfg *config.Config) (*Client, error) {
 	return &Client{
 		cfg:          cfg,
@@ -235,7 +250,7 @@ func (c *Client) processDialogs(dialogs []tg.DialogClass, chats []tg.ChatClass, 
 	return results
 }
 
-func (c *Client) GetUnreadMessages(ctx context.Context, chatID int64, lastReadID int) ([]Message, error) {
+func (c *Client) GetUnreadMessages(ctx context.Context, chatID int64, lastReadID int, progress ProgressFunc) ([]Message, error) {
 	inputPeer, ok := c.peerCache[chatID]
 	if !ok {
 		// Fallback to storage if not in cache (though unlikely for dialogs)
@@ -280,6 +295,12 @@ func (c *Client) GetUnreadMessages(ctx context.Context, chatID int64, lastReadID
 		})
 
 		allMessages = append(allMessages, batchMessages...)
+		reportProgress(progress, ProgressUpdate{
+			Phase:   "unread",
+			Parsed:  len(batchMessages),
+			Scanned: len(msgs),
+			Batch:   1,
+		})
 
 		if stop {
 			break
@@ -423,7 +444,7 @@ func (c *Client) GetForumTopics(ctx context.Context, chatID int64) ([]Topic, err
 }
 
 // GetTopicMessages fetches unread messages from a specific topic.
-func (c *Client) GetTopicMessages(ctx context.Context, chatID int64, topicID int, lastReadID int) ([]Message, error) {
+func (c *Client) GetTopicMessages(ctx context.Context, chatID int64, topicID int, lastReadID int, progress ProgressFunc) ([]Message, error) {
 	inputPeer, ok := c.peerCache[chatID]
 	if !ok {
 		inputPeer = c.ctx.PeerStorage.GetInputPeerById(chatID)
@@ -493,6 +514,12 @@ func (c *Client) GetTopicMessages(ctx context.Context, chatID int64, topicID int
 		})
 
 		allMessages = append(allMessages, batchMessages...)
+		reportProgress(progress, ProgressUpdate{
+			Phase:   "topic-unread",
+			Parsed:  len(batchMessages),
+			Scanned: len(msgs),
+			Batch:   1,
+		})
 
 		if stop {
 			break
@@ -593,7 +620,7 @@ func (c *Client) resolveMissingUsers(ctx context.Context, msgs []tg.MessageClass
 }
 
 // GetMessagesByDate fetches messages within a specific date range.
-func (c *Client) GetMessagesByDate(ctx context.Context, chatID int64, since, until time.Time) ([]Message, error) {
+func (c *Client) GetMessagesByDate(ctx context.Context, chatID int64, since, until time.Time, progress ProgressFunc) ([]Message, error) {
 	inputPeer, ok := c.peerCache[chatID]
 	if !ok {
 		inputPeer = c.ctx.PeerStorage.GetInputPeerById(chatID)
@@ -642,6 +669,12 @@ func (c *Client) GetMessagesByDate(ctx context.Context, chatID int64, since, unt
 		})
 
 		allMessages = append(allMessages, batchMessages...)
+		reportProgress(progress, ProgressUpdate{
+			Phase:   "date-range",
+			Parsed:  len(batchMessages),
+			Scanned: len(msgs),
+			Batch:   1,
+		})
 
 		if stop {
 			break
@@ -657,7 +690,7 @@ func (c *Client) GetMessagesByDate(ctx context.Context, chatID int64, since, unt
 }
 
 // GetTopicMessagesByDate fetches topic messages within a specific date range.
-func (c *Client) GetTopicMessagesByDate(ctx context.Context, chatID int64, topicID int, since, until time.Time) ([]Message, error) {
+func (c *Client) GetTopicMessagesByDate(ctx context.Context, chatID int64, topicID int, since, until time.Time, progress ProgressFunc) ([]Message, error) {
 	inputPeer, ok := c.peerCache[chatID]
 	if !ok {
 		inputPeer = c.ctx.PeerStorage.GetInputPeerById(chatID)
@@ -729,6 +762,12 @@ func (c *Client) GetTopicMessagesByDate(ctx context.Context, chatID int64, topic
 		})
 
 		allMessages = append(allMessages, batchMessages...)
+		reportProgress(progress, ProgressUpdate{
+			Phase:   "topic-date-range",
+			Parsed:  len(batchMessages),
+			Scanned: len(msgs),
+			Batch:   1,
+		})
 
 		if stop {
 			break

@@ -118,11 +118,15 @@ func (a *App) Run(ctx context.Context, opts RunOptions) error {
 		}
 
 		if opts.UseDateRange {
-			fmt.Printf("Fetching messages for topic %s from %s to %s...\n", selectedTopic.Title, opts.Since.Format("2006-01-02"), opts.Until.Format("2006-01-02"))
-			messages, err = a.tgClient.GetTopicMessagesByDate(ctx, selectedChat.ID, selectedTopic.ID, opts.Since, opts.Until)
+			progressTitle := fmt.Sprintf("%s / %s (%s to %s)", selectedChat.Title, selectedTopic.Title, opts.Since.Format("2006-01-02"), opts.Until.Format("2006-01-02"))
+			messages, err = a.fetchWithProgress(progressTitle, func(progress telegram.ProgressFunc) ([]telegram.Message, error) {
+				return a.tgClient.GetTopicMessagesByDate(ctx, selectedChat.ID, selectedTopic.ID, opts.Since, opts.Until, progress)
+			})
 		} else {
-			fmt.Printf("Fetching unread messages for topic %s...\n", selectedTopic.Title)
-			messages, err = a.tgClient.GetTopicMessages(ctx, selectedChat.ID, selectedTopic.ID, selectedTopic.LastReadID)
+			progressTitle := fmt.Sprintf("%s / %s (unread)", selectedChat.Title, selectedTopic.Title)
+			messages, err = a.fetchWithProgress(progressTitle, func(progress telegram.ProgressFunc) ([]telegram.Message, error) {
+				return a.tgClient.GetTopicMessages(ctx, selectedChat.ID, selectedTopic.ID, selectedTopic.LastReadID, progress)
+			})
 		}
 		if err != nil {
 			return fmt.Errorf("failed to get topic messages: %w", err)
@@ -130,11 +134,15 @@ func (a *App) Run(ctx context.Context, opts RunOptions) error {
 		exportTitle = selectedChat.Title + " - " + selectedTopic.Title
 	} else {
 		if opts.UseDateRange {
-			fmt.Printf("Fetching messages for %s from %s to %s...\n", selectedChat.Title, opts.Since.Format("2006-01-02"), opts.Until.Format("2006-01-02"))
-			messages, err = a.tgClient.GetMessagesByDate(ctx, selectedChat.ID, opts.Since, opts.Until)
+			progressTitle := fmt.Sprintf("%s (%s to %s)", selectedChat.Title, opts.Since.Format("2006-01-02"), opts.Until.Format("2006-01-02"))
+			messages, err = a.fetchWithProgress(progressTitle, func(progress telegram.ProgressFunc) ([]telegram.Message, error) {
+				return a.tgClient.GetMessagesByDate(ctx, selectedChat.ID, opts.Since, opts.Until, progress)
+			})
 		} else {
-			fmt.Printf("Fetching unread messages for %s...\n", selectedChat.Title)
-			messages, err = a.tgClient.GetUnreadMessages(ctx, selectedChat.ID, selectedChat.LastReadID)
+			progressTitle := fmt.Sprintf("%s (unread)", selectedChat.Title)
+			messages, err = a.fetchWithProgress(progressTitle, func(progress telegram.ProgressFunc) ([]telegram.Message, error) {
+				return a.tgClient.GetUnreadMessages(ctx, selectedChat.ID, selectedChat.LastReadID, progress)
+			})
 		}
 		if err != nil {
 			return fmt.Errorf("failed to get messages: %w", err)
