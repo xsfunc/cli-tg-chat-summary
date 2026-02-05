@@ -92,11 +92,11 @@ The session file is stored at `session/session.db`.
 
 ## Output Format
 
-Exports are written to `exports/` with a header and one line per message:
+Exports are written to `exports/` with a header and collapsed blocks per sender ID:
 - `Chat Summary: <title>`
 - `Export Date: <RFC1123>`
 - `Total Messages: <count>`
-- `[HH:MM] Sender: Message`
+- `[HH:MM] id=<sender_id>:` followed by indented message lines
 
 Example file:
 ```text
@@ -104,9 +104,11 @@ Chat Summary: Project Team
 Export Date: Mon, 27 Jan 2025 10:35:12 UTC
 Total Messages: 3
 
-[09:12] Alex: Morning! Status update?
-[09:18] Sam: API is green, frontend build is running.
-[09:22] Alex: Great, pushing summary in 30 min.
+[09:12] id=123:
+  Morning! Status update?
+[09:18-09:22] id=456:
+  API is green, frontend build is running.
+  Build is green, pushing summary in 30 min.
 ```
 
 ## Project Structure

@@ -50,10 +50,10 @@ type Topic struct {
 }
 
 type Message struct {
-	ID     int
-	Date   time.Time
-	Text   string
-	Sender string
+	ID       int
+	Date     time.Time
+	Text     string
+	SenderID int64
 }
 
 type ProgressUpdate struct {
@@ -358,56 +358,6 @@ func (c *Client) MarkAsRead(ctx context.Context, chat Chat, maxID int) error {
 	return nil
 }
 
-func (c *Client) getSenderName(ctx context.Context, userID int64) (string, error) {
-	// Try cache first
-	if inputPeer, ok := c.peerCache[userID]; ok {
-		// Check against self
-		if c.proto.Self.ID == userID {
-			return c.proto.Self.FirstName, nil
-		}
-
-		if userPeer, ok := inputPeer.(*tg.InputPeerUser); ok {
-			inputUser := &tg.InputUser{
-				UserID:     userPeer.UserID,
-				AccessHash: userPeer.AccessHash,
-			}
-			return c.fetchUserName(ctx, inputUser)
-		}
-	}
-
-	// Fallback to storage
-	inputPeer := c.ctx.PeerStorage.GetInputPeerById(userID)
-	if inputPeer == nil {
-		return "", fmt.Errorf("user not found in storage")
-	}
-
-	switch p := inputPeer.(type) {
-	case *tg.InputPeerUser:
-		return c.fetchUserName(ctx, &tg.InputUser{UserID: p.UserID, AccessHash: p.AccessHash})
-	case *tg.InputPeerSelf:
-		if c.proto.Self.ID == userID {
-			return c.proto.Self.FirstName, nil
-		}
-		return "Me", nil
-	}
-
-	return "", fmt.Errorf("peer is not a user")
-}
-
-func (c *Client) fetchUserName(ctx context.Context, inputUser tg.InputUserClass) (string, error) {
-	res, err := c.ctx.Raw.UsersGetUsers(ctx, []tg.InputUserClass{inputUser})
-	if err != nil {
-		return "", err
-	}
-	if len(res) > 0 {
-		switch user := res[0].(type) {
-		case *tg.User:
-			return user.FirstName, nil
-		}
-	}
-	return "", fmt.Errorf("user not found")
-}
-
 // GetForumTopics fetches all topics from a forum with their unread counts.
 func (c *Client) GetForumTopics(ctx context.Context, chatID int64) ([]Topic, error) {
 	inputPeer, ok := c.peerCache[chatID]
@@ -554,69 +504,6 @@ func (c *Client) MarkTopicAsRead(ctx context.Context, chatID int64, topicID int,
 	}
 
 	return nil
-}
-
-// resolveMissingUsers identifies users in the message batch that are missing from the provided userMap
-// and fetches them in a single batch request to avoid N+1 rate limit issues.
-func (c *Client) resolveMissingUsers(ctx context.Context, msgs []tg.MessageClass, userMap map[int64]tg.UserClass) {
-	var usersToFetch []tg.InputUserClass
-	usersToFetchIDs := make(map[int64]bool)
-
-	for _, m := range msgs {
-		msg, ok := m.(*tg.Message)
-		if !ok || msg.Out || msg.FromID == nil {
-			continue
-		}
-
-		var userID int64
-		if p, ok := msg.FromID.(*tg.PeerUser); ok {
-			userID = p.UserID
-		} else {
-			continue
-		}
-
-		// If user is not in map, queue for fetching
-		if _, found := userMap[userID]; !found {
-			if !usersToFetchIDs[userID] {
-				usersToFetchIDs[userID] = true
-
-				// Try to construct InputUser from cache or storage
-				var inputUser tg.InputUserClass
-
-				// 1. Try Cache
-				if ip, ok := c.peerCache[userID]; ok {
-					if uPeer, ok := ip.(*tg.InputPeerUser); ok {
-						inputUser = &tg.InputUser{UserID: uPeer.UserID, AccessHash: uPeer.AccessHash}
-					}
-				}
-
-				// 2. Try Storage if cache failed
-				if inputUser == nil {
-					ip := c.ctx.PeerStorage.GetInputPeerById(userID)
-					if ip != nil {
-						if uPeer, ok := ip.(*tg.InputPeerUser); ok {
-							inputUser = &tg.InputUser{UserID: uPeer.UserID, AccessHash: uPeer.AccessHash}
-						}
-					}
-				}
-
-				if inputUser != nil {
-					usersToFetch = append(usersToFetch, inputUser)
-				}
-			}
-		}
-	}
-
-	// Fetch missing users in one go
-	if len(usersToFetch) > 0 {
-		// Use a short timeout context if possible, but for now use existing ctx
-		res, err := c.ctx.Raw.UsersGetUsers(ctx, usersToFetch)
-		if err == nil {
-			for _, u := range res {
-				userMap[u.GetID()] = u
-			}
-		}
-	}
 }
 
 // GetMessagesByDate fetches messages within a specific date range.
@@ -809,31 +696,20 @@ func (c *Client) GetTopicMessagesByDate(ctx context.Context, chatID int64, topic
 	return allMessages, nil
 }
 
-func (c *Client) resolveSender(ctx context.Context, fromID tg.PeerClass, userMap map[int64]tg.UserClass) string {
-	sender := "Unknown"
-	if fromID != nil {
-		switch p := fromID.(type) {
-		case *tg.PeerUser:
-			if u, ok := userMap[p.UserID]; ok {
-				switch user := u.(type) {
-				case *tg.User:
-					sender = user.FirstName + " " + user.LastName
-					if sender == " " {
-						sender = "Deleted Account"
-					}
-				}
-			} else {
-				name, err := c.getSenderName(ctx, p.UserID)
-				if err == nil {
-					sender = name
-				}
-			}
-		}
+func resolveSenderID(fromID tg.PeerClass) int64 {
+	if fromID == nil {
+		return 0
 	}
-	if sender == " " || sender == "" {
-		sender = "Unknown"
+	switch p := fromID.(type) {
+	case *tg.PeerUser:
+		return p.UserID
+	case *tg.PeerChannel:
+		return p.ChannelID
+	case *tg.PeerChat:
+		return p.ChatID
+	default:
+		return 0
 	}
-	return sender
 }
 
 func extractMessagesAndUsers(result tg.MessagesMessagesClass) ([]tg.MessageClass, []tg.UserClass) {
@@ -848,15 +724,8 @@ func extractMessagesAndUsers(result tg.MessagesMessagesClass) ([]tg.MessageClass
 	return nil, nil
 }
 
-func (c *Client) processMessageBatch(ctx context.Context, msgs []tg.MessageClass, users []tg.UserClass,
+func (c *Client) processMessageBatch(ctx context.Context, msgs []tg.MessageClass, _ []tg.UserClass,
 	filter func(msg *tg.Message) (process bool, stop bool)) ([]Message, int, bool) {
-
-	userMap := make(map[int64]tg.UserClass)
-	for _, u := range users {
-		userMap[u.GetID()] = u
-	}
-
-	c.resolveMissingUsers(ctx, msgs, userMap)
 
 	var results []Message
 	var lastID int
@@ -879,12 +748,12 @@ func (c *Client) processMessageBatch(ctx context.Context, msgs []tg.MessageClass
 			continue
 		}
 
-		sender := c.resolveSender(ctx, msg.FromID, userMap)
+		senderID := resolveSenderID(msg.FromID)
 		results = append(results, Message{
-			ID:     msg.ID,
-			Date:   time.Unix(int64(msg.Date), 0),
-			Text:   msg.Message,
-			Sender: sender,
+			ID:       msg.ID,
+			Date:     time.Unix(int64(msg.Date), 0),
+			Text:     msg.Message,
+			SenderID: senderID,
 		})
 	}
 	return results, lastID, stopLoop

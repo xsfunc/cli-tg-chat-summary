@@ -286,10 +286,10 @@ func TestProcessDialogs_MultipleDialogs(t *testing.T) {
 func TestMessageStruct(t *testing.T) {
 	now := time.Now()
 	msg := Message{
-		ID:     42,
-		Date:   now,
-		Text:   "Hello, World!",
-		Sender: "TestUser",
+		ID:       42,
+		Date:     now,
+		Text:     "Hello, World!",
+		SenderID: 123,
 	}
 
 	if msg.ID != 42 {
@@ -298,8 +298,8 @@ func TestMessageStruct(t *testing.T) {
 	if msg.Text != "Hello, World!" {
 		t.Errorf("unexpected text: %s", msg.Text)
 	}
-	if msg.Sender != "TestUser" {
-		t.Errorf("unexpected sender: %s", msg.Sender)
+	if msg.SenderID != 123 {
+		t.Errorf("unexpected sender id: %d", msg.SenderID)
 	}
 }
 
