@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -18,12 +17,21 @@ import (
 type App struct {
 	cfg      *config.Config
 	tgClient *telegram.Client
+	exporter Exporter
 }
 
 func New(cfg *config.Config, tgClient *telegram.Client) *App {
+	return NewWithExporter(cfg, tgClient, NewDefaultExporter())
+}
+
+func NewWithExporter(cfg *config.Config, tgClient *telegram.Client, exporter Exporter) *App {
+	if exporter == nil {
+		exporter = NewDefaultExporter()
+	}
 	return &App{
 		cfg:      cfg,
 		tgClient: tgClient,
+		exporter: exporter,
 	}
 }
 
@@ -158,42 +166,9 @@ func (a *App) Run(ctx context.Context, opts RunOptions) error {
 	// Export to file
 	// format: ChatName_Date.txt or ChatName_TopicName_Date.txt
 	// date range format: ChatName_YYYY-MM-DD_to_YYYY-MM-DD.txt
-	cleanName := sanitizeFilename(exportTitle)
-	var suffix string
-	if opts.UseDateRange {
-		suffix = fmt.Sprintf("%s_to_%s", opts.Since.Format("2006-01-02"), opts.Until.Format("2006-01-02"))
-	} else {
-		suffix = time.Now().Format("2006-01-02")
-	}
-	filename := fmt.Sprintf("exports/%s_%s.txt", cleanName, suffix)
-
-	// Ensure exports directory exists
-	cwd, _ := os.Getwd()
-	if err := os.MkdirAll(filepath.Join(cwd, "exports"), 0755); err != nil {
-		return fmt.Errorf("failed to create exports directory: %w", err)
-	}
-
-	// Ensure filename is absolute or relative to cur dir
-	fullPath := filepath.Join(cwd, filename)
-
-	f, err := os.Create(fullPath)
+	filename, err := a.exporter.Export(exportTitle, messages, opts)
 	if err != nil {
-		return fmt.Errorf("failed to create file: %w", err)
-	}
-	defer func() {
-		if err := f.Close(); err != nil {
-			fmt.Printf("failed to close file: %v\n", err)
-		}
-	}()
-
-	if _, err := fmt.Fprintf(f, "Chat Summary: %s\n", exportTitle); err != nil {
-		fmt.Printf("failed to write header: %v\n", err)
-	}
-	if _, err := fmt.Fprintf(f, "Export Date: %s\n", time.Now().Format(time.RFC1123)); err != nil {
-		fmt.Printf("failed to write date: %v\n", err)
-	}
-	if _, err := fmt.Fprintf(f, "Total Messages: %d\n\n", len(messages)); err != nil {
-		fmt.Printf("failed to write count: %v\n", err)
+		return fmt.Errorf("failed to export: %w", err)
 	}
 
 	// Sort messages by date (oldest first)
@@ -204,11 +179,6 @@ func (a *App) Run(ctx context.Context, opts RunOptions) error {
 	for i := len(messages)/2 - 1; i >= 0; i-- {
 		opp := len(messages) - 1 - i
 		messages[i], messages[opp] = messages[opp], messages[i]
-	}
-
-	blocks := buildMessageBlocks(messages)
-	if err := writeMessageBlocks(f, blocks); err != nil {
-		fmt.Printf("failed to write message blocks: %v\n", err)
 	}
 
 	fmt.Printf("Successfully exported %d messages to %s\n", len(messages), filename)
