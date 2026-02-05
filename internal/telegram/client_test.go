@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -339,5 +340,114 @@ func TestTopicStruct(t *testing.T) {
 	}
 	if topic.Title != "General" {
 		t.Errorf("unexpected Title: %s", topic.Title)
+	}
+}
+
+func TestFetchMessages_PaginatesAndReportsProgress(t *testing.T) {
+	client := &Client{}
+
+	callCount := 0
+	var seenOffsets []int
+	var seenOffsetDates []int
+	var progressBatches []ProgressUpdate
+
+	fetch := func(offsetID, offsetDate, limit int) (tg.MessagesMessagesClass, error) {
+		callCount++
+		seenOffsets = append(seenOffsets, offsetID)
+		seenOffsetDates = append(seenOffsetDates, offsetDate)
+
+		switch callCount {
+		case 1:
+			msgs := make([]tg.MessageClass, 0, limit)
+			for i := 0; i < limit; i++ {
+				msgs = append(msgs, &tg.Message{ID: 200 - i, Date: 1000 - i, Message: "a"})
+			}
+			return &tg.MessagesMessages{Messages: msgs}, nil
+		case 2:
+			return &tg.MessagesMessages{
+				Messages: []tg.MessageClass{
+					&tg.Message{ID: 99, Date: 500, Message: "b"},
+					&tg.Message{ID: 98, Date: 400, Message: "c"},
+				},
+			}, nil
+		default:
+			return &tg.MessagesMessages{Messages: nil}, nil
+		}
+	}
+
+	filter := func(msg *tg.Message) (bool, bool) {
+		return true, false
+	}
+
+	progress := func(update ProgressUpdate) {
+		progressBatches = append(progressBatches, update)
+	}
+
+	got, err := client.fetchMessages(
+		context.Background(),
+		progress,
+		"test-phase",
+		time.Time{},
+		false,
+		fetch,
+		filter,
+	)
+	if err != nil {
+		t.Fatalf("fetchMessages error: %v", err)
+	}
+	if len(got) != 102 {
+		t.Fatalf("expected 102 messages, got %d", len(got))
+	}
+	if callCount != 2 {
+		t.Fatalf("expected 2 fetch calls, got %d", callCount)
+	}
+	if len(seenOffsets) < 2 || seenOffsets[0] != 0 || seenOffsets[1] != 101 {
+		t.Fatalf("unexpected offsets: %v", seenOffsets)
+	}
+	for _, od := range seenOffsetDates {
+		if od != 0 {
+			t.Fatalf("unexpected offsetDate when not using it: %v", seenOffsetDates)
+		}
+	}
+	if len(progressBatches) < 2 {
+		t.Fatalf("expected progress updates per batch, got %d", len(progressBatches))
+	}
+	if progressBatches[0].Phase != "test-phase" {
+		t.Fatalf("unexpected progress phase: %s", progressBatches[0].Phase)
+	}
+}
+
+func TestFetchMessages_UsesOffsetDateOnFirstPage(t *testing.T) {
+	client := &Client{}
+
+	var seenOffsetDates []int
+	until := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	fetch := func(offsetID, offsetDate, limit int) (tg.MessagesMessagesClass, error) {
+		seenOffsetDates = append(seenOffsetDates, offsetDate)
+		return &tg.MessagesMessages{Messages: nil}, nil
+	}
+
+	filter := func(msg *tg.Message) (bool, bool) {
+		return true, false
+	}
+
+	_, err := client.fetchMessages(
+		context.Background(),
+		nil,
+		"phase",
+		until,
+		true,
+		fetch,
+		filter,
+	)
+	if err != nil {
+		t.Fatalf("fetchMessages error: %v", err)
+	}
+	if len(seenOffsetDates) != 1 {
+		t.Fatalf("expected 1 fetch call, got %d", len(seenOffsetDates))
+	}
+	if seenOffsetDates[0] != int(until.Unix()) {
+		t.Fatalf("unexpected offsetDate: got %d want %d", seenOffsetDates[0], int(until.Unix()))
 	}
 }

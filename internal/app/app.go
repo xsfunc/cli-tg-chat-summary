@@ -163,14 +163,6 @@ func (a *App) Run(ctx context.Context, opts RunOptions) error {
 		return nil
 	}
 
-	// Export to file
-	// format: ChatName_Date.txt or ChatName_TopicName_Date.txt
-	// date range format: ChatName_YYYY-MM-DD_to_YYYY-MM-DD.txt
-	filename, err := a.exporter.Export(exportTitle, messages, opts)
-	if err != nil {
-		return fmt.Errorf("failed to export: %w", err)
-	}
-
 	// Sort messages by date (oldest first)
 	// fetched messages are usually newest first from history?
 	// `GetUnreadMessages` implementation appended them as they came.
@@ -179,6 +171,14 @@ func (a *App) Run(ctx context.Context, opts RunOptions) error {
 	for i := len(messages)/2 - 1; i >= 0; i-- {
 		opp := len(messages) - 1 - i
 		messages[i], messages[opp] = messages[opp], messages[i]
+	}
+
+	// Export to file
+	// format: ChatName_Date.txt or ChatName_TopicName_Date.txt
+	// date range format: ChatName_YYYY-MM-DD_to_YYYY-MM-DD.txt
+	filename, err := a.exporter.Export(exportTitle, messages, opts)
+	if err != nil {
+		return fmt.Errorf("failed to export: %w", err)
 	}
 
 	fmt.Printf("Successfully exported %d messages to %s\n", len(messages), filename)

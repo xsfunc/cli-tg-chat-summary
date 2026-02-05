@@ -142,21 +142,68 @@ func (c *Client) GetDialogs(ctx context.Context) ([]Chat, error) {
 		c.ctx = c.proto.CreateContext()
 	}
 
-	dialogs, err := c.ctx.Raw.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{
-		Limit:      100,
-		OffsetPeer: &tg.InputPeerEmpty{},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get dialogs: %w", err)
-	}
-
+	const limit = 100
 	var parsedDialogs []Chat
+	seen := make(map[int64]struct{})
 
-	switch d := dialogs.(type) {
-	case *tg.MessagesDialogsSlice:
-		parsedDialogs = c.processDialogs(d.Dialogs, d.Chats, d.Users)
-	case *tg.MessagesDialogs:
-		parsedDialogs = c.processDialogs(d.Dialogs, d.Chats, d.Users)
+	offsetPeer := tg.InputPeerClass(&tg.InputPeerEmpty{})
+	offsetID := 0
+	offsetDate := 0
+
+	for {
+		dialogs, err := c.ctx.Raw.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{
+			Limit:      limit,
+			OffsetPeer: offsetPeer,
+			OffsetID:   offsetID,
+			OffsetDate: offsetDate,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get dialogs: %w", err)
+		}
+
+		var batch []Chat
+		var lastDialog *tg.Dialog
+
+		switch d := dialogs.(type) {
+		case *tg.MessagesDialogsSlice:
+			batch = c.processDialogs(d.Dialogs, d.Chats, d.Users)
+			if len(d.Dialogs) > 0 {
+				if dlg, ok := d.Dialogs[len(d.Dialogs)-1].(*tg.Dialog); ok {
+					lastDialog = dlg
+				}
+			}
+		case *tg.MessagesDialogs:
+			batch = c.processDialogs(d.Dialogs, d.Chats, d.Users)
+			if len(d.Dialogs) > 0 {
+				if dlg, ok := d.Dialogs[len(d.Dialogs)-1].(*tg.Dialog); ok {
+					lastDialog = dlg
+				}
+			}
+		}
+
+		for _, chat := range batch {
+			if _, ok := seen[chat.ID]; ok {
+				continue
+			}
+			seen[chat.ID] = struct{}{}
+			parsedDialogs = append(parsedDialogs, chat)
+		}
+
+		if len(batch) < limit || lastDialog == nil {
+			break
+		}
+
+		peerID := resolveSenderID(lastDialog.Peer)
+		nextPeer, ok := c.peerCache[peerID]
+		if !ok {
+			nextPeer = c.ctx.PeerStorage.GetInputPeerById(peerID)
+		}
+		if nextPeer == nil {
+			break
+		}
+		offsetPeer = nextPeer
+		offsetID = lastDialog.TopMessage
+		offsetDate = 0
 	}
 
 	// Sort by unread count desc
@@ -261,30 +308,21 @@ func (c *Client) GetUnreadMessages(ctx context.Context, chatID int64, lastReadID
 		return nil, fmt.Errorf("peer %d not found in cache or storage", chatID)
 	}
 
-	var allMessages []Message
-	offsetID := 0
-	batchSize := 100
-
-	// Check loop: fetch until we find messages <= lastReadID OR end of history
-	for {
-		// Rate limit is handled by middleware
-		req := &tg.MessagesGetHistoryRequest{
-			Peer:     inputPeer,
-			Limit:    batchSize,
-			OffsetID: offsetID,
-		}
-
-		history, err := c.ctx.Raw.MessagesGetHistory(ctx, req)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get history: %w", err)
-		}
-
-		msgs, users := extractMessagesAndUsers(history)
-		if len(msgs) == 0 {
-			break
-		}
-
-		batchMessages, lastID, stop := c.processMessageBatch(ctx, msgs, users, func(msg *tg.Message) (bool, bool) {
+	return c.fetchMessages(
+		ctx,
+		progress,
+		"unread",
+		time.Time{},
+		false,
+		func(offsetID, offsetDate, limit int) (tg.MessagesMessagesClass, error) {
+			req := &tg.MessagesGetHistoryRequest{
+				Peer:     inputPeer,
+				Limit:    limit,
+				OffsetID: offsetID,
+			}
+			return c.ctx.Raw.MessagesGetHistory(ctx, req)
+		},
+		func(msg *tg.Message) (bool, bool) {
 			if msg.ID <= lastReadID {
 				return false, true // Stop
 			}
@@ -292,27 +330,8 @@ func (c *Client) GetUnreadMessages(ctx context.Context, chatID int64, lastReadID
 				return false, false // Skip
 			}
 			return true, false // Process
-		})
-
-		allMessages = append(allMessages, batchMessages...)
-		reportProgress(progress, ProgressUpdate{
-			Phase:   "unread",
-			Parsed:  len(batchMessages),
-			Scanned: len(msgs),
-			Batch:   1,
-		})
-
-		if stop {
-			break
-		}
-
-		offsetID = lastID
-		if len(msgs) < batchSize {
-			break
-		}
-	}
-
-	return allMessages, nil
+		},
+	)
 }
 
 func (c *Client) MarkAsRead(ctx context.Context, chat Chat, maxID int) error {
@@ -403,48 +422,30 @@ func (c *Client) GetTopicMessages(ctx context.Context, chatID int64, topicID int
 		return nil, fmt.Errorf("peer %d not found", chatID)
 	}
 
-	var allMessages []Message
-	offsetID := 0
-	batchSize := 100
-
-	for {
-		// Rate limit is handled by middleware
-		var msgs []tg.MessageClass
-		var users []tg.UserClass
-
-		if topicID == 1 {
-			// General topic - use regular GetHistory but filter messages without ReplyTo.TopMsgID
-			req := &tg.MessagesGetHistoryRequest{
-				Peer:     inputPeer,
-				Limit:    batchSize,
-				OffsetID: offsetID,
+	return c.fetchMessages(
+		ctx,
+		progress,
+		"topic-unread",
+		time.Time{},
+		false,
+		func(offsetID, offsetDate, limit int) (tg.MessagesMessagesClass, error) {
+			if topicID == 1 {
+				req := &tg.MessagesGetHistoryRequest{
+					Peer:     inputPeer,
+					Limit:    limit,
+					OffsetID: offsetID,
+				}
+				return c.ctx.Raw.MessagesGetHistory(ctx, req)
 			}
-			history, err := c.ctx.Raw.MessagesGetHistory(ctx, req)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get history: %w", err)
-			}
-			msgs, users = extractMessagesAndUsers(history)
-		} else {
-			// Non-general topic - use GetReplies
 			req := &tg.MessagesGetRepliesRequest{
 				Peer:     inputPeer,
 				MsgID:    topicID,
-				Limit:    batchSize,
+				Limit:    limit,
 				OffsetID: offsetID,
 			}
-			replies, err := c.ctx.Raw.MessagesGetReplies(ctx, req)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get topic replies: %w", err)
-			}
-			msgs, users = extractMessagesAndUsers(replies)
-		}
-
-		if len(msgs) == 0 {
-			break
-		}
-
-		batchMessages, lastID, stop := c.processMessageBatch(ctx, msgs, users, func(msg *tg.Message) (bool, bool) {
-			// For General topic, filter to only include messages without ReplyTo or with top_msg_id=0
+			return c.ctx.Raw.MessagesGetReplies(ctx, req)
+		},
+		func(msg *tg.Message) (bool, bool) {
 			if topicID == 1 {
 				if msg.ReplyTo != nil {
 					if reply, ok := msg.ReplyTo.(*tg.MessageReplyHeader); ok && reply.ReplyToTopID != 0 {
@@ -452,36 +453,15 @@ func (c *Client) GetTopicMessages(ctx context.Context, chatID int64, topicID int
 					}
 				}
 			}
-
 			if msg.ID <= lastReadID {
 				return false, true // Stop
 			}
-
 			if msg.Message == "" || msg.Out {
 				return false, false // Skip
 			}
 			return true, false // Process
-		})
-
-		allMessages = append(allMessages, batchMessages...)
-		reportProgress(progress, ProgressUpdate{
-			Phase:   "topic-unread",
-			Parsed:  len(batchMessages),
-			Scanned: len(msgs),
-			Batch:   1,
-		})
-
-		if stop {
-			break
-		}
-
-		offsetID = lastID
-		if len(msgs) < batchSize {
-			break
-		}
-	}
-
-	return allMessages, nil
+		},
+	)
 }
 
 // MarkTopicAsRead marks a specific topic as read up to the given message ID.
@@ -516,73 +496,35 @@ func (c *Client) GetMessagesByDate(ctx context.Context, chatID int64, since, unt
 		return nil, fmt.Errorf("peer %d not found", chatID)
 	}
 
-	var allMessages []Message
-	offsetID := 0
-	batchSize := 100
-
-	for {
-		offsetDate := 0
-		if offsetID == 0 && !until.IsZero() {
-			// Jump close to the end of the requested range, then page backwards.
-			offsetDate = int(until.Unix())
-			reportProgress(progress, ProgressUpdate{
-				Phase: fmt.Sprintf("jumped to date %s", until.Format("2006-01-02")),
-			})
-		}
-		req := &tg.MessagesGetHistoryRequest{
-			Peer:     inputPeer,
-			Limit:    batchSize,
-			OffsetID: offsetID,
-			OffsetDate: offsetDate,
-		}
-
-		history, err := c.ctx.Raw.MessagesGetHistory(ctx, req)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get history: %w", err)
-		}
-
-		msgs, users := extractMessagesAndUsers(history)
-		if len(msgs) == 0 {
-			break
-		}
-
-		batchMessages, lastID, stop := c.processMessageBatch(ctx, msgs, users, func(msg *tg.Message) (bool, bool) {
+	return c.fetchMessages(
+		ctx,
+		progress,
+		"date-range",
+		until,
+		true,
+		func(offsetID, offsetDate, limit int) (tg.MessagesMessagesClass, error) {
+			req := &tg.MessagesGetHistoryRequest{
+				Peer:       inputPeer,
+				Limit:      limit,
+				OffsetID:   offsetID,
+				OffsetDate: offsetDate,
+			}
+			return c.ctx.Raw.MessagesGetHistory(ctx, req)
+		},
+		func(msg *tg.Message) (bool, bool) {
 			msgTime := time.Unix(int64(msg.Date), 0)
-
-			// Messages are newest first
 			if msgTime.Before(since) {
 				return false, true // Stop (tooOld)
 			}
-
 			if msgTime.After(until) {
 				return false, false // Skip (tooNew)
 			}
-
 			if msg.Message == "" || msg.Out {
 				return false, false // Skip
 			}
 			return true, false // Process
-		})
-
-		allMessages = append(allMessages, batchMessages...)
-		reportProgress(progress, ProgressUpdate{
-			Phase:   "date-range",
-			Parsed:  len(batchMessages),
-			Scanned: len(msgs),
-			Batch:   1,
-		})
-
-		if stop {
-			break
-		}
-
-		offsetID = lastID
-		if len(msgs) < batchSize {
-			break
-		}
-	}
-
-	return allMessages, nil
+		},
+	)
 }
 
 // GetTopicMessagesByDate fetches topic messages within a specific date range.
@@ -595,62 +537,32 @@ func (c *Client) GetTopicMessagesByDate(ctx context.Context, chatID int64, topic
 		return nil, fmt.Errorf("peer %d not found", chatID)
 	}
 
-	var allMessages []Message
-	offsetID := 0
-	batchSize := 100
-
-	for {
-		var msgs []tg.MessageClass
-		var users []tg.UserClass
-
-		if topicID == 1 {
-			offsetDate := 0
-			if offsetID == 0 && !until.IsZero() {
-				// Jump close to the end of the requested range, then page backwards.
-				offsetDate = int(until.Unix())
-				reportProgress(progress, ProgressUpdate{
-					Phase: fmt.Sprintf("jumped to date %s", until.Format("2006-01-02")),
-				})
-			}
-			req := &tg.MessagesGetHistoryRequest{
-				Peer:     inputPeer,
-				Limit:    batchSize,
-				OffsetID: offsetID,
-				OffsetDate: offsetDate,
-			}
-			history, err := c.ctx.Raw.MessagesGetHistory(ctx, req)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get history: %w", err)
-			}
-			msgs, users = extractMessagesAndUsers(history)
-		} else {
-			offsetDate := 0
-			if offsetID == 0 && !until.IsZero() {
-				// Jump close to the end of the requested range, then page backwards.
-				offsetDate = int(until.Unix())
-				reportProgress(progress, ProgressUpdate{
-					Phase: fmt.Sprintf("jumped to date %s", until.Format("2006-01-02")),
-				})
+	return c.fetchMessages(
+		ctx,
+		progress,
+		"topic-date-range",
+		until,
+		true,
+		func(offsetID, offsetDate, limit int) (tg.MessagesMessagesClass, error) {
+			if topicID == 1 {
+				req := &tg.MessagesGetHistoryRequest{
+					Peer:       inputPeer,
+					Limit:      limit,
+					OffsetID:   offsetID,
+					OffsetDate: offsetDate,
+				}
+				return c.ctx.Raw.MessagesGetHistory(ctx, req)
 			}
 			req := &tg.MessagesGetRepliesRequest{
-				Peer:     inputPeer,
-				MsgID:    topicID,
-				Limit:    batchSize,
-				OffsetID: offsetID,
+				Peer:       inputPeer,
+				MsgID:      topicID,
+				Limit:      limit,
+				OffsetID:   offsetID,
 				OffsetDate: offsetDate,
 			}
-			replies, err := c.ctx.Raw.MessagesGetReplies(ctx, req)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get topic replies: %w", err)
-			}
-			msgs, users = extractMessagesAndUsers(replies)
-		}
-
-		if len(msgs) == 0 {
-			break
-		}
-
-		batchMessages, lastID, stop := c.processMessageBatch(ctx, msgs, users, func(msg *tg.Message) (bool, bool) {
+			return c.ctx.Raw.MessagesGetReplies(ctx, req)
+		},
+		func(msg *tg.Message) (bool, bool) {
 			if topicID == 1 {
 				if msg.ReplyTo != nil {
 					if reply, ok := msg.ReplyTo.(*tg.MessageReplyHeader); ok && reply.ReplyToTopID != 0 {
@@ -658,42 +570,19 @@ func (c *Client) GetTopicMessagesByDate(ctx context.Context, chatID int64, topic
 					}
 				}
 			}
-
 			msgTime := time.Unix(int64(msg.Date), 0)
-
 			if msgTime.Before(since) {
 				return false, true // Stop (tooOld)
 			}
-
 			if msgTime.After(until) {
 				return false, false // Skip (tooNew)
 			}
-
 			if msg.Message == "" || msg.Out {
 				return false, false // Skip
 			}
 			return true, false // Process
-		})
-
-		allMessages = append(allMessages, batchMessages...)
-		reportProgress(progress, ProgressUpdate{
-			Phase:   "topic-date-range",
-			Parsed:  len(batchMessages),
-			Scanned: len(msgs),
-			Batch:   1,
-		})
-
-		if stop {
-			break
-		}
-
-		offsetID = lastID
-		if len(msgs) < batchSize {
-			break
-		}
-	}
-
-	return allMessages, nil
+		},
+	)
 }
 
 func resolveSenderID(fromID tg.PeerClass) int64 {
@@ -722,6 +611,61 @@ func extractMessagesAndUsers(result tg.MessagesMessagesClass) ([]tg.MessageClass
 		return r.Messages, r.Users
 	}
 	return nil, nil
+}
+
+func (c *Client) fetchMessages(
+	ctx context.Context,
+	progress ProgressFunc,
+	phase string,
+	until time.Time,
+	useOffsetDate bool,
+	fetch func(offsetID, offsetDate, limit int) (tg.MessagesMessagesClass, error),
+	filter func(msg *tg.Message) (process bool, stop bool),
+) ([]Message, error) {
+	var allMessages []Message
+	offsetID := 0
+	batchSize := 100
+
+	for {
+		offsetDate := 0
+		if useOffsetDate && offsetID == 0 && !until.IsZero() {
+			// Jump close to the end of the requested range, then page backwards.
+			offsetDate = int(until.Unix())
+			reportProgress(progress, ProgressUpdate{
+				Phase: fmt.Sprintf("jumped to date %s", until.Format("2006-01-02")),
+			})
+		}
+
+		result, err := fetch(offsetID, offsetDate, batchSize)
+		if err != nil {
+			return nil, err
+		}
+
+		msgs, users := extractMessagesAndUsers(result)
+		if len(msgs) == 0 {
+			break
+		}
+
+		batchMessages, lastID, stop := c.processMessageBatch(ctx, msgs, users, filter)
+		allMessages = append(allMessages, batchMessages...)
+		reportProgress(progress, ProgressUpdate{
+			Phase:   phase,
+			Parsed:  len(batchMessages),
+			Scanned: len(msgs),
+			Batch:   1,
+		})
+
+		if stop {
+			break
+		}
+
+		offsetID = lastID
+		if len(msgs) < batchSize {
+			break
+		}
+	}
+
+	return allMessages, nil
 }
 
 func (c *Client) processMessageBatch(ctx context.Context, msgs []tg.MessageClass, _ []tg.UserClass,
