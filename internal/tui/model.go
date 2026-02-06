@@ -11,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -22,6 +23,8 @@ var (
 	paginationStyle   = list.DefaultStyles().PaginationStyle.PaddingLeft(4)
 	helpStyle         = list.DefaultStyles().HelpStyle.PaddingLeft(4).PaddingBottom(1)
 	quitTextStyle     = lipgloss.NewStyle().Margin(1, 0, 2, 4)
+	modeStyle         = lipgloss.NewStyle().MarginLeft(2).Foreground(lipgloss.Color("62"))
+	errorStyle        = lipgloss.NewStyle().MarginLeft(2).Foreground(lipgloss.Color("160"))
 )
 
 type item struct {
@@ -53,17 +56,58 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	_, _ = fmt.Fprint(w, fn(str))
 }
 
+type ExportMode int
+
+const (
+	ModeUnread ExportMode = iota
+	ModeDateRange
+)
+
+type viewState int
+
+const (
+	stateChatList viewState = iota
+	stateModeList
+	stateSinceInput
+	stateUntilInput
+)
+
+type ModelOptions struct {
+	Mode  ExportMode
+	Since time.Time
+	Until time.Time
+}
+
 type Model struct {
 	list         list.Model
+	modeList     list.Model
 	selected     *telegram.Chat
 	quitting     bool
 	markReadFunc func(telegram.Chat) error
 	statusMsg    string
+	errorMsg     string
+	mode         ExportMode
+	state        viewState
+	sinceInput   textinput.Model
+	untilInput   textinput.Model
+	since        time.Time
+	until        time.Time
 }
 
 type statusClearMsg struct{}
 
-func NewModel(chats []telegram.Chat, markReadFunc func(telegram.Chat) error) Model {
+type modeItem struct {
+	mode  ExportMode
+	label string
+}
+
+func (i modeItem) FilterValue() string { return i.label }
+
+func (i modeItem) Title() string { return i.label }
+
+func (i modeItem) Description() string { return "" }
+
+func NewModel(chats []telegram.Chat, markReadFunc func(telegram.Chat) error, opts ModelOptions) Model {
 	items := make([]list.Item, len(chats))
 	for i, chat := range chats {
 		items[i] = item{chat: chat}
@@ -89,6 +133,10 @@ func NewModel(chats []telegram.Chat, markReadFunc func(telegram.Chat) error) Mod
 				key.WithKeys("ctrl+r"),
 				key.WithHelp("ctrl+r", "mark read"),
 			),
+			key.NewBinding(
+				key.WithKeys("m"),
+				key.WithHelp("m", "mode"),
+			),
 		}
 	}
 	l.AdditionalShortHelpKeys = func() []key.Binding {
@@ -97,10 +145,58 @@ func NewModel(chats []telegram.Chat, markReadFunc func(telegram.Chat) error) Mod
 				key.WithKeys("ctrl+r"),
 				key.WithHelp("^r", "mark read"),
 			),
+			key.NewBinding(
+				key.WithKeys("m"),
+				key.WithHelp("m", "mode"),
+			),
 		}
 	}
 
-	return Model{list: l, markReadFunc: markReadFunc}
+	modeItems := []list.Item{
+		modeItem{mode: ModeUnread, label: "Unread"},
+		modeItem{mode: ModeDateRange, label: "Date range"},
+	}
+	modeList := list.New(modeItems, list.NewDefaultDelegate(), defaultWidth, listHeight)
+	modeList.Title = "Select Export Mode"
+	modeList.SetShowStatusBar(false)
+	modeList.SetFilteringEnabled(false)
+	modeList.Styles.Title = titleStyle
+	modeList.Styles.PaginationStyle = paginationStyle
+	modeList.Styles.HelpStyle = helpStyle
+
+	sinceInput := textinput.New()
+	sinceInput.Placeholder = "YYYY-MM-DD"
+	sinceInput.CharLimit = 10
+	sinceInput.Width = 12
+
+	untilInput := textinput.New()
+	untilInput.Placeholder = "YYYY-MM-DD"
+	untilInput.CharLimit = 10
+	untilInput.Width = 12
+
+	mode := opts.Mode
+	if mode != ModeDateRange {
+		mode = ModeUnread
+	}
+
+	if !opts.Since.IsZero() {
+		sinceInput.SetValue(opts.Since.Format("2006-01-02"))
+	}
+	if !opts.Until.IsZero() {
+		untilInput.SetValue(opts.Until.Format("2006-01-02"))
+	}
+
+	return Model{
+		list:         l,
+		modeList:     modeList,
+		markReadFunc: markReadFunc,
+		mode:         mode,
+		state:        stateChatList,
+		sinceInput:   sinceInput,
+		untilInput:   untilInput,
+		since:        opts.Since,
+		until:        opts.Until,
+	}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -111,64 +207,155 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.list.SetWidth(msg.Width)
+		m.modeList.SetWidth(msg.Width)
 		return m, nil
 
 	case tea.KeyMsg:
-		switch keypress := msg.String(); keypress {
-		case "ctrl+c", "esc":
-			m.quitting = true
-			return m, tea.Quit
-
-		case "q", "Q": // Handle both cases
-			// If we are filtering, we should execute the filter logic (type the letter q)
-			// unless the user specifically wants to quit.
-			// However, standard intuitive behavior is "q" quits if not typing.
-			if m.list.FilterState() != list.Filtering {
-				m.quitting = true
-				return m, tea.Quit
-			}
-
-		case "enter":
-			i, ok := m.list.SelectedItem().(item)
-			if ok {
-				m.selected = &i.chat
-			}
-			return m, tea.Quit
-
-		case "ctrl+r":
-			if m.list.FilterState() == list.Filtering {
-				// Don't intercept if filtering (though ctrl+r is unlikely to be typed text everywhere, but better safe)
-				// Actually ctrl+r is usually safe.
-				// But let's keep it safe.
-				break
-			}
-			if m.markReadFunc == nil {
-				m.statusMsg = "Error: Mark as read not implemented"
+		switch m.state {
+		case stateModeList:
+			switch keypress := msg.String(); keypress {
+			case "ctrl+c", "esc":
+				m.state = stateChatList
+				return m, nil
+			case "enter":
+				i, ok := m.modeList.SelectedItem().(modeItem)
+				if ok {
+					if i.mode == ModeDateRange {
+						m.state = stateSinceInput
+						m.errorMsg = ""
+						m.sinceInput.Focus()
+						m.untilInput.Blur()
+						return m, textinput.Blink
+					}
+					m.mode = ModeUnread
+					m.state = stateChatList
+				}
 				return m, nil
 			}
-
-			i, ok := m.list.SelectedItem().(item)
-			if ok {
-				err := m.markReadFunc(i.chat)
-				if err != nil {
-					m.statusMsg = fmt.Sprintf("Error: %v", err)
-				} else {
-					m.statusMsg = fmt.Sprintf("Marked %s as read", i.chat.Title)
-
-					// Update the item in the list directly to show 0 unread
-					idx := m.list.Index()
-					newChat := i.chat
-					newChat.UnreadCount = 0
-
-					// Update the items list
-					items := m.list.Items()
-					items[idx] = item{chat: newChat}
-					m.list.SetItems(items)
+		case stateSinceInput:
+			switch keypress := msg.String(); keypress {
+			case "ctrl+c":
+				m.quitting = true
+				return m, tea.Quit
+			case "esc":
+				m.errorMsg = ""
+				m.state = stateChatList
+				m.sinceInput.Blur()
+				return m, nil
+			case "enter":
+				value := strings.TrimSpace(m.sinceInput.Value())
+				if value == "" {
+					m.errorMsg = "Start date is required (YYYY-MM-DD)"
+					return m, nil
 				}
-				// Clear status after 2 seconds
-				return m, tea.Tick(2*time.Second, func(_ time.Time) tea.Msg {
-					return statusClearMsg{}
-				})
+				parsed, err := time.Parse("2006-01-02", value)
+				if err != nil {
+					m.errorMsg = "Invalid date format. Use YYYY-MM-DD"
+					return m, nil
+				}
+				m.since = parsed
+				m.errorMsg = ""
+				m.state = stateUntilInput
+				m.sinceInput.Blur()
+				m.untilInput.Focus()
+				return m, textinput.Blink
+			}
+		case stateUntilInput:
+			switch keypress := msg.String(); keypress {
+			case "ctrl+c":
+				m.quitting = true
+				return m, tea.Quit
+			case "esc":
+				m.errorMsg = ""
+				m.state = stateChatList
+				m.untilInput.Blur()
+				return m, nil
+			case "enter":
+				value := strings.TrimSpace(m.untilInput.Value())
+				if value == "" {
+					m.until = time.Now()
+				} else {
+					parsed, err := time.Parse("2006-01-02", value)
+					if err != nil {
+						m.errorMsg = "Invalid date format. Use YYYY-MM-DD"
+						return m, nil
+					}
+					if parsed.Before(m.since) {
+						m.errorMsg = "End date cannot be before start date"
+						return m, nil
+					}
+					m.until = parsed.Add(24 * time.Hour).Add(-time.Nanosecond)
+				}
+				m.mode = ModeDateRange
+				m.errorMsg = ""
+				m.state = stateChatList
+				m.untilInput.Blur()
+				return m, nil
+			}
+		default:
+			switch keypress := msg.String(); keypress {
+			case "ctrl+c", "esc":
+				m.quitting = true
+				return m, tea.Quit
+
+			case "q", "Q": // Handle both cases
+				// If we are filtering, we should execute the filter logic (type the letter q)
+				// unless the user specifically wants to quit.
+				// However, standard intuitive behavior is "q" quits if not typing.
+				if m.list.FilterState() != list.Filtering {
+					m.quitting = true
+					return m, tea.Quit
+				}
+
+			case "m":
+				if m.list.FilterState() != list.Filtering {
+					m.state = stateModeList
+					m.errorMsg = ""
+					return m, nil
+				}
+
+			case "enter":
+				i, ok := m.list.SelectedItem().(item)
+				if ok {
+					m.selected = &i.chat
+				}
+				return m, tea.Quit
+
+			case "ctrl+r":
+				if m.list.FilterState() == list.Filtering {
+					// Don't intercept if filtering (though ctrl+r is unlikely to be typed text everywhere, but better safe)
+					// Actually ctrl+r is usually safe.
+					// But let's keep it safe.
+					break
+				}
+				if m.markReadFunc == nil {
+					m.statusMsg = "Error: Mark as read not implemented"
+					return m, nil
+				}
+
+				i, ok := m.list.SelectedItem().(item)
+				if ok {
+					err := m.markReadFunc(i.chat)
+					if err != nil {
+						m.statusMsg = fmt.Sprintf("Error: %v", err)
+					} else {
+						m.statusMsg = fmt.Sprintf("Marked %s as read", i.chat.Title)
+
+						// Update the item in the list directly to show 0 unread
+						idx := m.list.Index()
+						newChat := i.chat
+						newChat.UnreadCount = 0
+
+						// Update the items list
+						items := m.list.Items()
+						items[idx] = item{chat: newChat}
+						m.list.SetItems(items)
+					}
+					// Clear status after 2 seconds
+					return m, tea.Tick(2*time.Second, func(_ time.Time) tea.Msg {
+						return statusClearMsg{}
+					})
+				}
 			}
 		}
 
@@ -178,7 +365,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	var cmd tea.Cmd
-	m.list, cmd = m.list.Update(msg)
+	switch m.state {
+	case stateModeList:
+		m.modeList, cmd = m.modeList.Update(msg)
+	case stateSinceInput:
+		m.sinceInput, cmd = m.sinceInput.Update(msg)
+	case stateUntilInput:
+		m.untilInput, cmd = m.untilInput.Update(msg)
+	default:
+		m.list, cmd = m.list.Update(msg)
+	}
 	return m, cmd
 }
 
@@ -190,15 +386,59 @@ func (m Model) View() string {
 		return quitTextStyle.Render(fmt.Sprintf("Selected: %s", m.selected.Title))
 	}
 
-	view := m.list.View()
-	if m.statusMsg != "" {
-		view += "\n" + quitTextStyle.Foreground(lipgloss.Color("62")).Render(m.statusMsg)
+	switch m.state {
+	case stateModeList:
+		return m.modeList.View() + "\n" + helpStyle.Render("enter: select  esc: back")
+	case stateSinceInput:
+		return renderDateInput("Start date (YYYY-MM-DD)", m.sinceInput, m.errorMsg)
+	case stateUntilInput:
+		return renderDateInput("End date (YYYY-MM-DD, optional)", m.untilInput, m.errorMsg)
+	default:
+		view := m.list.View()
+		view += "\n" + modeStyle.Render("Mode: "+modeLabel(m.mode))
+		if m.statusMsg != "" {
+			view += "\n" + quitTextStyle.Foreground(lipgloss.Color("62")).Render(m.statusMsg)
+		}
+		return view
 	}
-	return view
 }
 
 func (m Model) GetSelected() *telegram.Chat {
 	return m.selected
+}
+
+func (m Model) GetExportMode() ExportMode {
+	return m.mode
+}
+
+func (m Model) GetDateRange() (time.Time, time.Time, bool) {
+	if m.mode != ModeDateRange {
+		return time.Time{}, time.Time{}, false
+	}
+	return m.since, m.until, true
+}
+
+func modeLabel(mode ExportMode) string {
+	switch mode {
+	case ModeDateRange:
+		return "Date range"
+	default:
+		return "Unread"
+	}
+}
+
+func renderDateInput(title string, input textinput.Model, errMsg string) string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render(title))
+	b.WriteString("\n\n  ")
+	b.WriteString(input.View())
+	if errMsg != "" {
+		b.WriteString("\n\n")
+		b.WriteString(errorStyle.Render(errMsg))
+	}
+	b.WriteString("\n\n")
+	b.WriteString(helpStyle.Render("enter: confirm  esc: cancel"))
+	return b.String()
 }
 
 // TopicModel is a TUI model for selecting forum topics

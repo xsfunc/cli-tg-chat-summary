@@ -15,7 +15,7 @@ func TestNewModel(t *testing.T) {
 		{ID: 3, Title: "Chat 3", UnreadCount: 0},
 	}
 
-	model := NewModel(chats, nil)
+	model := NewModel(chats, nil, ModelOptions{})
 
 	if model.selected != nil {
 		t.Error("expected selected to be nil initially")
@@ -29,7 +29,7 @@ func TestNewModel(t *testing.T) {
 }
 
 func TestNewModel_EmptyChats(t *testing.T) {
-	model := NewModel([]telegram.Chat{}, nil)
+	model := NewModel([]telegram.Chat{}, nil, ModelOptions{})
 
 	if model.selected != nil {
 		t.Error("expected selected to be nil")
@@ -37,7 +37,7 @@ func TestNewModel_EmptyChats(t *testing.T) {
 }
 
 func TestModel_Init(t *testing.T) {
-	model := NewModel([]telegram.Chat{}, nil)
+	model := NewModel([]telegram.Chat{}, nil, ModelOptions{})
 	cmd := model.Init()
 
 	if cmd != nil {
@@ -46,7 +46,7 @@ func TestModel_Init(t *testing.T) {
 }
 
 func TestModel_Update_Quit_CtrlC(t *testing.T) {
-	model := NewModel([]telegram.Chat{{ID: 1, Title: "Test"}}, nil)
+	model := NewModel([]telegram.Chat{{ID: 1, Title: "Test"}}, nil, ModelOptions{})
 
 	msg := tea.KeyMsg{Type: tea.KeyCtrlC}
 	newModel, cmd := model.Update(msg)
@@ -61,7 +61,7 @@ func TestModel_Update_Quit_CtrlC(t *testing.T) {
 }
 
 func TestModel_Update_Quit_Esc(t *testing.T) {
-	model := NewModel([]telegram.Chat{{ID: 1, Title: "Test"}}, nil)
+	model := NewModel([]telegram.Chat{{ID: 1, Title: "Test"}}, nil, ModelOptions{})
 
 	msg := tea.KeyMsg{Type: tea.KeyEsc}
 	newModel, cmd := model.Update(msg)
@@ -76,7 +76,7 @@ func TestModel_Update_Quit_Esc(t *testing.T) {
 }
 
 func TestModel_Update_Quit_Q(t *testing.T) {
-	model := NewModel([]telegram.Chat{{ID: 1, Title: "Test"}}, nil)
+	model := NewModel([]telegram.Chat{{ID: 1, Title: "Test"}}, nil, ModelOptions{})
 
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}}
 	newModel, cmd := model.Update(msg)
@@ -95,7 +95,7 @@ func TestModel_Update_Enter(t *testing.T) {
 		{ID: 1, Title: "First Chat", UnreadCount: 5},
 		{ID: 2, Title: "Second Chat", UnreadCount: 10},
 	}
-	model := NewModel(chats, nil)
+	model := NewModel(chats, nil, ModelOptions{})
 
 	// Press Enter to select the first item
 	msg := tea.KeyMsg{Type: tea.KeyEnter}
@@ -113,7 +113,7 @@ func TestModel_Update_Enter(t *testing.T) {
 }
 
 func TestModel_Update_WindowSize(t *testing.T) {
-	model := NewModel([]telegram.Chat{{ID: 1, Title: "Test"}}, nil)
+	model := NewModel([]telegram.Chat{{ID: 1, Title: "Test"}}, nil, ModelOptions{})
 
 	msg := tea.WindowSizeMsg{Width: 100, Height: 50}
 	newModel, cmd := model.Update(msg)
@@ -129,7 +129,7 @@ func TestModel_Update_WindowSize(t *testing.T) {
 }
 
 func TestModel_View(t *testing.T) {
-	model := NewModel([]telegram.Chat{{ID: 1, Title: "Test"}}, nil)
+	model := NewModel([]telegram.Chat{{ID: 1, Title: "Test"}}, nil, ModelOptions{})
 	view := model.View()
 
 	if view == "" {
@@ -138,7 +138,7 @@ func TestModel_View(t *testing.T) {
 }
 
 func TestModel_View_Quitting(t *testing.T) {
-	model := NewModel([]telegram.Chat{{ID: 1, Title: "Test"}}, nil)
+	model := NewModel([]telegram.Chat{{ID: 1, Title: "Test"}}, nil, ModelOptions{})
 	model.quitting = true
 
 	view := model.View()
@@ -149,7 +149,7 @@ func TestModel_View_Quitting(t *testing.T) {
 }
 
 func TestModel_View_Selected(t *testing.T) {
-	model := NewModel([]telegram.Chat{{ID: 1, Title: "Test Chat"}}, nil)
+	model := NewModel([]telegram.Chat{{ID: 1, Title: "Test Chat"}}, nil, ModelOptions{})
 	model.selected = &telegram.Chat{ID: 1, Title: "Test Chat"}
 
 	view := model.View()
@@ -160,7 +160,7 @@ func TestModel_View_Selected(t *testing.T) {
 }
 
 func TestModel_GetSelected(t *testing.T) {
-	model := NewModel([]telegram.Chat{}, nil)
+	model := NewModel([]telegram.Chat{}, nil, ModelOptions{})
 
 	if model.GetSelected() != nil {
 		t.Error("expected nil when nothing selected")
@@ -215,7 +215,7 @@ func TestModel_Update_CtrlR(t *testing.T) {
 		return nil
 	}
 
-	model := NewModel(chats, markRead)
+	model := NewModel(chats, markRead, ModelOptions{})
 
 	msg := tea.KeyMsg{Type: tea.KeyCtrlR}
 	newModel, _ := model.Update(msg)

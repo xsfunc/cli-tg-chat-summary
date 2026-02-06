@@ -56,6 +56,8 @@ make run
 You can export messages from a specific date range instead of just unread messages.
 When using date range mode, messages will NOT be marked as read.
 
+In the TUI, press `m` to choose the export mode. Select `Date range` to enter `since` and `until` interactively.
+
 ```bash
 # Export from a specific date until now
 ./bin/tg-summary --since 2024-01-01

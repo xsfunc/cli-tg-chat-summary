@@ -71,7 +71,13 @@ func (a *App) Run(ctx context.Context, opts RunOptions) error {
 		return a.tgClient.MarkAsRead(ctx, chat, chat.TopMessageID)
 	}
 
-	model := tui.NewModel(chats, markReadFunc)
+	modelOpts := tui.ModelOptions{}
+	if opts.UseDateRange {
+		modelOpts.Mode = tui.ModeDateRange
+		modelOpts.Since = opts.Since
+		modelOpts.Until = opts.Until
+	}
+	model := tui.NewModel(chats, markReadFunc, modelOpts)
 	p := tea.NewProgram(model)
 	finalModel, err := p.Run()
 	if err != nil {
@@ -87,6 +93,18 @@ func (a *App) Run(ctx context.Context, opts RunOptions) error {
 	if selectedChat == nil {
 		fmt.Println("No chat selected.")
 		return nil
+	}
+
+	mode := m.GetExportMode()
+	if mode == tui.ModeDateRange {
+		since, until, ok := m.GetDateRange()
+		if ok {
+			opts.UseDateRange = true
+			opts.Since = since
+			opts.Until = until
+		}
+	} else {
+		opts.UseDateRange = false
 	}
 
 	var messages []telegram.Message
