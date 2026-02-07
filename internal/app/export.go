@@ -5,8 +5,6 @@ import (
 	"io"
 	"strings"
 	"time"
-
-	"cli-tg-chat-summary/internal/telegram"
 )
 
 type messageBlock struct {
@@ -42,7 +40,7 @@ func normalizeLines(text string) []string {
 	return lines
 }
 
-func buildMessageBlocks(messages []telegram.Message) []messageBlock {
+func buildMessageBlocks(messages []TemplateMessage) []messageBlock {
 	var blocks []messageBlock
 	for _, msg := range messages {
 		lines := normalizeLines(msg.Text)

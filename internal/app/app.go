@@ -36,6 +36,7 @@ type RunOptions struct {
 	Since          time.Time
 	Until          time.Time
 	UseDateRange   bool
+	ExportFormat   string
 	ChatID         int64
 	ChatIDRaw      int64
 	TopicID        int

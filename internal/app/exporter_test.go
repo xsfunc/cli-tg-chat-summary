@@ -31,8 +31,9 @@ func newTestExporterEnv(now time.Time) *testExporterEnv {
 		Cwd:    "/work",
 	}
 	env.Exporter = &DefaultExporter{
-		Now:   func() time.Time { return now },
-		Getwd: func() (string, error) { return env.Cwd, nil },
+		Now:       func() time.Time { return now },
+		Getwd:     func() (string, error) { return env.Cwd, nil },
+		Templates: NewDefaultTemplateRegistry(),
 		MkdirAll: func(path string, _ os.FileMode) error {
 			env.MkdirPath = path
 			return nil
@@ -101,5 +102,38 @@ func TestDefaultExporter_Export_DateRange(t *testing.T) {
 
 	if filename != "exports/My Chat_2024-12-01_to_2024-12-31.txt" {
 		t.Fatalf("unexpected date range filename: %s", filename)
+	}
+}
+
+func TestDefaultExporter_Export_XML(t *testing.T) {
+	now := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+	env := newTestExporterEnv(now)
+
+	messages := []telegram.Message{
+		{SenderID: 10, Date: now, Text: "hello"},
+		{SenderID: 10, Date: now.Add(1 * time.Minute), Text: "world"},
+	}
+
+	filename, err := env.Exporter.Export("My Chat", messages, RunOptions{ExportFormat: "xml"})
+	if err != nil {
+		t.Fatalf("export error: %v", err)
+	}
+
+	if filename != "exports/My Chat_2025-01-02.xml" {
+		t.Fatalf("unexpected filename: %s", filename)
+	}
+
+	output := env.Buffer.String()
+	if !strings.Contains(output, "<chat title=\"My Chat\">") {
+		t.Fatalf("missing chat tag: %q", output)
+	}
+	if !strings.Contains(output, "<export_date>2025-01-02T03:04:05Z</export_date>") {
+		t.Fatalf("missing export date: %q", output)
+	}
+	if !strings.Contains(output, "<total_messages>2</total_messages>") {
+		t.Fatalf("missing total messages: %q", output)
+	}
+	if !strings.Contains(output, "<text>hello</text>") || !strings.Contains(output, "<text>world</text>") {
+		t.Fatalf("missing message text: %q", output)
 	}
 }

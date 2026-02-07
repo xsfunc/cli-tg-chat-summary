@@ -174,6 +174,7 @@ The session file is stored at `session/session.db`.
 
 - `--since YYYY-MM-DD` start date for export (enables date range mode).
 - `--until YYYY-MM-DD` end date for export (defaults to now when omitted).
+- `--format <text|xml>` export format (default `text`).
 - `--id <int64>` chat ID (raw or `-100...`) to export without TUI.
 - `--topic-id <int>` forum topic ID for non-interactive mode.
 - `--topic <string>` forum topic title for non-interactive mode.
@@ -197,6 +198,22 @@ Total Messages: 3
 [09:18-09:22] id=456:
   API is green, frontend build is running.
   Build is green, pushing summary in 30 min.
+```
+
+### XML Format
+
+Use `--format xml` to export messages as XML:
+
+```xml
+<chat title="Project Team">
+  <export_date>2025-01-27T10:35:12Z</export_date>
+  <total_messages>3</total_messages>
+  <message>
+    <sender id="123"></sender>
+    <time>2025-01-27T09:12:00Z</time>
+    <text>Morning! Status update?</text>
+  </message>
+</chat>
 ```
 
 ## Project Structure

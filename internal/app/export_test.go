@@ -4,8 +4,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"cli-tg-chat-summary/internal/telegram"
 )
 
 func TestNormalizeLines(t *testing.T) {
@@ -25,7 +23,7 @@ func TestNormalizeLines(t *testing.T) {
 
 func TestBuildMessageBlocks_CollapseBySender(t *testing.T) {
 	base := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
-	messages := []telegram.Message{
+	messages := []TemplateMessage{
 		{SenderID: 1, Date: base.Add(0 * time.Minute), Text: "a"},
 		{SenderID: 1, Date: base.Add(1 * time.Minute), Text: "b\n\nc"},
 		{SenderID: 2, Date: base.Add(2 * time.Minute), Text: "x"},
