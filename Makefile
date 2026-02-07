@@ -1,7 +1,5 @@
 # Project variables
 APP_NAME := tg-summary
-# Get short commit hash for versioning
-COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "undefined")
 
 # Default goal (runs when calling 'make' without arguments)
 .DEFAULT_GOAL := help
@@ -18,12 +16,12 @@ ci: clean all ## CI pipeline: clean build from scratch
 
 .PHONY: build
 build: ## Compile binary to bin/ directory
-	@echo "Building $(APP_NAME) (commit: $(COMMIT))..."
-	go build -ldflags "-X main.version=$(COMMIT)" -o bin/$(APP_NAME) ./cmd/tg-summary
+	@echo "Building $(APP_NAME)..."
+	go build -o bin/$(APP_NAME) ./cmd/tg-summary
 
 .PHONY: install
 install: ## Install to $GOPATH/bin
-	go install -ldflags "-X main.version=$(COMMIT)" ./cmd/tg-summary
+	go install ./cmd/tg-summary
 
 .PHONY: run
 run: ## Run application via go run (example: make run ARGS="-since 24h")
