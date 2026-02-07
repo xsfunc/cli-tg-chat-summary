@@ -3,6 +3,55 @@
 CLI tool that authenticates with Telegram, lets you pick a chat (or forum topic) via TUI, exports unread messages or a date range to a text file, and optionally marks them as read.
 This repository currently does not call an LLM; it only exports messages so they can be summarized elsewhere.
 
+## AI Agent Guide
+
+Use this section to orient quickly and save context window.
+
+First read: `README.md` (this file) and `AGENTS.md` for repo-specific rules.
+
+High-level flow:
+- `cmd/tg-summary` parses flags and launches the app.
+- `internal/app` orchestrates login, TUI flow, export, and mark-as-read.
+- `internal/telegram` wraps the Telegram client and data fetch.
+- `internal/tui` contains Bubble Tea models for chat and topic selection.
+- `internal/config` loads config from env and `.env`.
+- Exported files go to `exports/` and sessions to `session/session.db`.
+
+Key behaviors to preserve:
+- Unread mode exports unread messages and marks them as read.
+- Date range mode exports a specific range and does not mark as read.
+- `--id` skips TUI and works with `--since` and `--until`.
+- Forum chats require `--topic-id` or `--topic` in non-interactive mode.
+
+Where to look for common tasks:
+- CLI flags or new options: `cmd/tg-summary/`.
+- Export format or file naming: `internal/app/` and related helpers.
+- Telegram API changes or fetch logic: `internal/telegram/`.
+- TUI changes: `internal/tui/`.
+- Config or env updates: `internal/config/`.
+
+Testing and lint:
+- Run `make lint` before commits.
+- Run `make test` for unit tests.
+- Go formatting is required via `gofmt`.
+
+Common pitfalls:
+- Do not change public APIs without explicit request.
+- Avoid new dependencies unless strictly needed.
+- Be explicit about context cancellation and goroutine lifetimes.
+
+Pre-commit checklist:
+1. `gofmt` on changed Go files.
+2. `make lint`.
+3. `make test` (or the relevant subset).
+4. Update `README.md` if behavior or structure changed.
+5. Check `git status -sb`.
+
+Definition of Done (for tasks):
+1. At least one relevant test or verification step was run.
+2. Documentation reflects any behavior/structure changes.
+3. Diffs are understood and `git status -sb` is clean.
+
 ## Prerequisites
 
 - Go 1.25+

@@ -1,5 +1,8 @@
 # AGENTS.md
 
+## First Step
+- Read `README.md` first to understand the project goals, structure, and workflows before making changes.
+
 ## Go Guidelines
 - Run gofmt on any Go code changes.
 - Prefer the standard library; avoid new third-party dependencies unless necessary.
@@ -23,6 +26,15 @@
 - For quick rollback, prefer `git restore --staged .` and `git restore .`.
 - Use Conventional Commits: `type(scope): summary` (e.g., `feat(cli): add --json output`).
 - After implementing code changes (before commit), run `make lint`.
+
+## Docs
+- After completing a task and running tests/lint, update `README.md` to reflect any new functionality or structure changes.
+- If task changes behavior, update documentation to reflect the new behavior.
+
+## Definition of Done
+- At least one relevant test or verification step was run.
+- Documentation reflects behavior/structure changes.
+- `git status -sb` is clean and diffs are understood.
 
 ## Tooling
 - Provide short aliases in `Makefile` or `Taskfile` for build, test, and lint.
