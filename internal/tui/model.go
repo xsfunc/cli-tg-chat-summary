@@ -45,7 +45,6 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	}
 
 	str := fmt.Sprintf("%s (%d unread)", i.chat.Title, i.chat.UnreadCount)
-	str = truncateWithEllipsis(str, listContentWidth(m.Width()))
 
 	fn := itemStyle.Render
 	if index == m.Index() {
@@ -407,7 +406,7 @@ func (m Model) View() string {
 		return renderDateInput("End date (YYYY-MM-DD, optional)", m.untilInput, m.errorMsg)
 	default:
 		view := m.list.View()
-		view += "\n" + renderStatusBar(m.list.Width(), m.mode, m.statusMsg, m.currentChat())
+		view += "\n" + renderStatusBar(m.mode, m.statusMsg, m.currentChat())
 		return view
 	}
 }
@@ -458,32 +457,7 @@ func renderDateInput(title string, input textinput.Model, errMsg string) string 
 	return b.String()
 }
 
-func listContentWidth(width int) int {
-	const padding = 4
-	if width <= padding {
-		return 0
-	}
-	return width - padding
-}
-
-func truncateWithEllipsis(s string, max int) string {
-	if max <= 0 {
-		return ""
-	}
-	runes := []rune(s)
-	if len(runes) <= max {
-		return s
-	}
-	if max <= 3 {
-		return string(runes[:max])
-	}
-	return string(runes[:max-3]) + "..."
-}
-
-func renderStatusBar(width int, mode ExportMode, statusMsg string, chat *telegram.Chat) string {
-	if width <= 0 {
-		width = 80
-	}
+func renderStatusBar(mode ExportMode, statusMsg string, chat *telegram.Chat) string {
 	parts := []string{"Mode: " + modeLabel(mode)}
 	if chat != nil {
 		parts = append(parts, fmt.Sprintf("ID: %d", chat.ID))
@@ -491,12 +465,7 @@ func renderStatusBar(width int, mode ExportMode, statusMsg string, chat *telegra
 	if statusMsg != "" {
 		parts = append(parts, statusMsg)
 	}
-	contentWidth := width - 2
-	if contentWidth < 0 {
-		contentWidth = 0
-	}
-	line := truncateWithEllipsis(strings.Join(parts, " | "), contentWidth)
-	return statusBarStyle.Render(line)
+	return statusBarStyle.Render(strings.Join(parts, " | "))
 }
 
 func (m Model) currentChat() *telegram.Chat {
@@ -534,7 +503,6 @@ func (d topicItemDelegate) Render(w io.Writer, m list.Model, index int, listItem
 	}
 
 	str := fmt.Sprintf("%s (%d unread)", i.topic.Title, i.topic.UnreadCount)
-	str = truncateWithEllipsis(str, listContentWidth(m.Width()))
 
 	fn := itemStyle.Render
 	if index == m.Index() {
