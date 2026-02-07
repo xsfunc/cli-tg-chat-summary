@@ -89,7 +89,7 @@ func (a *App) Run(ctx context.Context, opts RunOptions) error {
 			modelOpts.Until = opts.Until
 		}
 		model := tui.NewModel(chats, markReadFunc, modelOpts)
-		p := tea.NewProgram(model)
+		p := tea.NewProgram(model, tea.WithAltScreen())
 		finalModel, err := p.Run()
 		if err != nil {
 			return fmt.Errorf("failed to run TUI: %w", err)
@@ -285,7 +285,7 @@ func (a *App) chooseForumTopic(topics []telegram.Topic, opts RunOptions) (*teleg
 
 	// Show topic selection TUI
 	topicModel := tui.NewTopicModel(topics)
-	tp := tea.NewProgram(topicModel)
+	tp := tea.NewProgram(topicModel, tea.WithAltScreen())
 	finalTopicModel, err := tp.Run()
 	if err != nil {
 		return nil, fmt.Errorf("failed to run topic TUI: %w", err)

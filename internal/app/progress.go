@@ -48,7 +48,7 @@ func (a *App) fetchWithProgress(opts FetchOpts, fetch func(context.Context, tele
 	}()
 
 	model := tui.NewProgressModel(opts.Title, msgCh)
-	p := tea.NewProgram(model)
+	p := tea.NewProgram(model, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to run progress TUI: %w", err)
