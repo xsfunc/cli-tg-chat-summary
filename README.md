@@ -148,6 +148,7 @@ To find chat IDs, use a Bot API-based tool or client that exposes chat IDs; chan
 3. If the selected chat is a forum, show a second TUI to select a topic.
 4. Export messages to `exports/<Chat_or_Topic>_<YYYY-MM-DD>.txt` (or `exports/<Chat_or_Topic>_<YYYY-MM-DD>_to_<YYYY-MM-DD>.txt` for date ranges).
 5. In unread mode, mark messages as read up to the max exported ID.
+6. In interactive mode, press Enter to return to the chat list after export.
 
 ## Configuration
 

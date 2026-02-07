@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -159,6 +160,7 @@ func (a *App) Run(ctx context.Context, opts RunOptions) error {
 
 		fmt.Printf("Successfully exported %d messages to %s\n", len(messages), filename)
 		_ = a.markMessagesAsRead(ctx, *selectedChat, selectedTopic, messages, opts)
+		waitForReturnToChatList()
 	}
 
 }
@@ -405,4 +407,10 @@ func sanitizeFilename(name string) string {
 		res = strings.ReplaceAll(res, char, "_")
 	}
 	return strings.TrimSpace(res)
+}
+
+func waitForReturnToChatList() {
+	fmt.Print("Press Enter to return to chat list...")
+	reader := bufio.NewReader(os.Stdin)
+	_, _ = reader.ReadString('\n')
 }
