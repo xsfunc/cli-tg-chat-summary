@@ -1,7 +1,6 @@
 package app
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -158,9 +157,10 @@ func (a *App) Run(ctx context.Context, opts RunOptions) error {
 			return err
 		}
 
-		fmt.Printf("Successfully exported %d messages to %s\n", len(messages), filename)
-		_ = a.markMessagesAsRead(ctx, *selectedChat, selectedTopic, messages, opts)
-		waitForReturnToChatList()
+		markResult := a.markMessagesAsRead(ctx, *selectedChat, selectedTopic, messages, opts)
+		if err := showExportSummary(exportTitle, filename, len(messages), formatMarkReadStatus(markResult)); err != nil {
+			return err
+		}
 	}
 
 }
@@ -221,7 +221,9 @@ func (a *App) runNonInteractive(ctx context.Context, opts RunOptions) error {
 	}
 
 	fmt.Printf("Successfully exported %d messages to %s\n", len(messages), filename)
-	return a.markMessagesAsRead(ctx, *selectedChat, selectedTopic, messages, opts)
+	markResult := a.markMessagesAsRead(ctx, *selectedChat, selectedTopic, messages, opts)
+	printMarkReadStatus(markResult)
+	return nil
 }
 
 func findChatByID(chats []telegram.Chat, chatID int64) *telegram.Chat {
@@ -374,7 +376,12 @@ func (a *App) exportMessages(exportTitle string, messages []telegram.Message, op
 	return filename, nil
 }
 
-func (a *App) markMessagesAsRead(ctx context.Context, selectedChat telegram.Chat, selectedTopic *telegram.Topic, messages []telegram.Message, opts RunOptions) error {
+type markReadResult struct {
+	Attempted bool
+	Err       error
+}
+
+func (a *App) markMessagesAsRead(ctx context.Context, selectedChat telegram.Chat, selectedTopic *telegram.Topic, messages []telegram.Message, opts RunOptions) markReadResult {
 	// Mark as read
 	maxID := 0
 	for _, msg := range messages {
@@ -384,20 +391,15 @@ func (a *App) markMessagesAsRead(ctx context.Context, selectedChat telegram.Chat
 	}
 
 	if maxID > 0 && !opts.UseDateRange {
-		fmt.Println("Marking messages as read...")
 		var err error
 		if selectedTopic != nil {
 			err = a.tgClient.MarkTopicAsRead(ctx, selectedChat.ID, selectedTopic.ID, maxID)
 		} else {
 			err = a.tgClient.MarkAsRead(ctx, selectedChat, maxID)
 		}
-		if err != nil {
-			fmt.Printf("Warning: failed to mark messages as read: %v\n", err)
-		} else {
-			fmt.Println("Messages marked as read.")
-		}
+		return markReadResult{Attempted: true, Err: err}
 	}
-	return nil
+	return markReadResult{}
 }
 
 func sanitizeFilename(name string) string {
@@ -409,8 +411,33 @@ func sanitizeFilename(name string) string {
 	return strings.TrimSpace(res)
 }
 
-func waitForReturnToChatList() {
-	fmt.Print("Press Enter to return to chat list...")
-	reader := bufio.NewReader(os.Stdin)
-	_, _ = reader.ReadString('\n')
+func formatMarkReadStatus(result markReadResult) string {
+	if !result.Attempted {
+		return ""
+	}
+	if result.Err != nil {
+		return fmt.Sprintf("Warning: failed to mark messages as read: %v", result.Err)
+	}
+	return "Messages marked as read."
+}
+
+func printMarkReadStatus(result markReadResult) {
+	if !result.Attempted {
+		return
+	}
+	fmt.Println("Marking messages as read...")
+	if result.Err != nil {
+		fmt.Printf("Warning: failed to mark messages as read: %v\n", result.Err)
+	} else {
+		fmt.Println("Messages marked as read.")
+	}
+}
+
+func showExportSummary(exportTitle, filename string, count int, markStatus string) error {
+	model := tui.NewSummaryModel(exportTitle, filename, count, markStatus)
+	p := tea.NewProgram(model, tea.WithAltScreen())
+	if _, err := p.Run(); err != nil {
+		return fmt.Errorf("failed to run summary TUI: %w", err)
+	}
+	return nil
 }

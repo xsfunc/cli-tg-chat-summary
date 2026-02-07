@@ -1,0 +1,62 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+// SummaryModel shows the result of an export and waits for user confirmation.
+type SummaryModel struct {
+	title      string
+	filename   string
+	count      int
+	markStatus string
+	quitting   bool
+}
+
+func NewSummaryModel(title, filename string, count int, markStatus string) SummaryModel {
+	return SummaryModel{
+		title:      title,
+		filename:   filename,
+		count:      count,
+		markStatus: markStatus,
+	}
+}
+
+func (m SummaryModel) Init() tea.Cmd { return nil }
+
+func (m SummaryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyEnter, tea.KeyEsc, tea.KeyCtrlC:
+			m.quitting = true
+			return m, tea.Quit
+		}
+		if len(msg.Runes) == 1 && (msg.Runes[0] == 'q' || msg.Runes[0] == 'Q') {
+			m.quitting = true
+			return m, tea.Quit
+		}
+	}
+	return m, nil
+}
+
+func (m SummaryModel) View() string {
+	if m.quitting {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Export complete\n\n")
+	b.WriteString(fmt.Sprintf("Chat: %s\n", m.title))
+	b.WriteString(fmt.Sprintf("Messages: %d\n", m.count))
+	b.WriteString(fmt.Sprintf("File: %s\n", m.filename))
+	if m.markStatus != "" {
+		b.WriteString("\n")
+		b.WriteString(m.markStatus)
+		b.WriteString("\n")
+	}
+	b.WriteString("\nPress Enter to return to chat list.")
+	return b.String()
+}

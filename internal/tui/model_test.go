@@ -386,3 +386,23 @@ func TestTopicItemDelegate_Update(t *testing.T) {
 		t.Error("expected nil command from Update")
 	}
 }
+
+func TestSummaryModel_View(t *testing.T) {
+	model := NewSummaryModel("Test Chat", "exports/test.txt", 3, "Messages marked as read.")
+	view := model.View()
+	if view == "" {
+		t.Error("expected non-empty view")
+	}
+}
+
+func TestSummaryModel_Update_Enter(t *testing.T) {
+	model := NewSummaryModel("Test Chat", "exports/test.txt", 3, "")
+	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Error("expected quit command")
+	}
+	m := newModel.(SummaryModel)
+	if !m.quitting {
+		t.Error("expected quitting to be true")
+	}
+}
