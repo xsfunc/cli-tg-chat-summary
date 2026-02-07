@@ -117,6 +117,10 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updated, cmd = m.chat.Update(msg)
 		m.chat = updated.(tui.Model)
 		if m.chat.Done() {
+			if m.chat.Canceled() {
+				m.state = stateExit
+				return m, tea.Quit
+			}
 			selected := m.chat.GetSelected()
 			if selected == nil {
 				return m.setMessage("", "No chat selected.", "Press Enter to exit.", stateExit, nil), nil
@@ -139,6 +143,10 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updated, cmd = m.topic.Update(msg)
 		m.topic = updated.(tui.TopicModel)
 		if m.topic.Done() {
+			if m.topic.Canceled() {
+				m.state = stateExit
+				return m, tea.Quit
+			}
 			selected := m.topic.GetSelected()
 			if selected == nil {
 				return m.setMessage("", "No topic selected.", "Press Enter to return.", stateLoadingChats, nil), nil

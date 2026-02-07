@@ -27,6 +27,13 @@ var (
 	statusBarStyle    = lipgloss.NewStyle().PaddingLeft(2).Foreground(lipgloss.Color("62"))
 )
 
+const (
+	minListWidth      = 20
+	minListHeight     = 6
+	defaultListWidth  = 60
+	defaultListHeight = 14
+)
+
 type item struct {
 	chat telegram.Chat
 }
@@ -115,10 +122,7 @@ func NewModel(chats []telegram.Chat, markReadFunc func(telegram.Chat) error, opt
 		items[i] = item{chat: chat}
 	}
 
-	const defaultWidth = 20
-	const listHeight = 14
-
-	l := list.New(items, itemDelegate{}, defaultWidth, listHeight)
+	l := list.New(items, itemDelegate{}, defaultListWidth, defaultListHeight)
 	l.Title = "Select Chat to Summarize"
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
@@ -158,7 +162,7 @@ func NewModel(chats []telegram.Chat, markReadFunc func(telegram.Chat) error, opt
 		modeItem{mode: ModeUnread, label: "Unread"},
 		modeItem{mode: ModeDateRange, label: "Date range"},
 	}
-	modeList := list.New(modeItems, list.NewDefaultDelegate(), defaultWidth, listHeight)
+	modeList := list.New(modeItems, list.NewDefaultDelegate(), defaultListWidth, defaultListHeight)
 	modeList.Title = "Select Export Mode"
 	modeList.SetShowStatusBar(false)
 	modeList.SetFilteringEnabled(false)
@@ -208,8 +212,8 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.list.SetWidth(msg.Width)
-		m.modeList.SetWidth(msg.Width)
+		applyChatListSize(&m.list, msg)
+		applyModeListSize(&m.modeList, msg, 2)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -476,6 +480,34 @@ func (m Model) currentChat() *telegram.Chat {
 	return &i.chat
 }
 
+func listWidthForWindow(width int) int {
+	adjusted := width - 2
+	if adjusted < minListWidth {
+		return minListWidth
+	}
+	return adjusted
+}
+
+func listHeightForWindow(height, extraLines int) int {
+	adjusted := height - extraLines
+	if adjusted < minListHeight {
+		return minListHeight
+	}
+	return adjusted
+}
+
+func applyChatListSize(l *list.Model, msg tea.WindowSizeMsg) {
+	width := listWidthForWindow(msg.Width)
+	l.SetWidth(width)
+	l.SetHeight(listHeightForWindow(msg.Height, 2))
+}
+
+func applyModeListSize(l *list.Model, msg tea.WindowSizeMsg, extraLines int) {
+	width := listWidthForWindow(msg.Width)
+	l.SetWidth(width)
+	l.SetHeight(listHeightForWindow(msg.Height, extraLines))
+}
+
 // TopicModel is a TUI model for selecting forum topics
 type TopicModel struct {
 	list     list.Model
@@ -520,10 +552,7 @@ func NewTopicModel(topics []telegram.Topic) TopicModel {
 		items[i] = topicItem{topic: topic}
 	}
 
-	const defaultWidth = 20
-	const listHeight = 14
-
-	l := list.New(items, topicItemDelegate{}, defaultWidth, listHeight)
+	l := list.New(items, topicItemDelegate{}, defaultListWidth, defaultListHeight)
 	l.Title = "Select Topic to Summarize"
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
@@ -541,7 +570,7 @@ func (m TopicModel) Init() tea.Cmd {
 func (m TopicModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.list.SetWidth(msg.Width)
+		applyModeListSize(&m.list, msg, 0)
 		return m, nil
 
 	case tea.KeyMsg:

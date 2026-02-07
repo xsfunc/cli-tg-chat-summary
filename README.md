@@ -101,6 +101,10 @@ make run
 
 Note: Interactive mode runs entirely inside the TUI (single alt-screen session) and does not print status messages to stdout.
 
+TUI quick keys:
+- `q`, `esc`, or `ctrl+c` to exit at any time.
+- `m` to switch export mode, `ctrl+r` to mark a chat as read (chat list only).
+
 
 ## Date Range Export
 
