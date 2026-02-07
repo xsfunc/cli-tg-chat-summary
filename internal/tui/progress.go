@@ -51,7 +51,7 @@ func (m ProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case progressDoneMsg:
 		m.done = true
-		return m, tea.Quit
+		return m, nil
 	case ProgressMsg:
 		m.parsed += msg.Parsed
 		m.scanned += msg.Scanned
@@ -85,6 +85,10 @@ func (m ProgressModel) View() string {
 		lines = append(lines, progressInfoStyle.Render(fmt.Sprintf("Phase: %s", m.phase)))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+func (m ProgressModel) Done() bool {
+	return m.done
 }
 
 func waitForProgress(ch <-chan tea.Msg) tea.Cmd {

@@ -9,9 +9,6 @@ import (
 
 	"cli-tg-chat-summary/internal/config"
 	"cli-tg-chat-summary/internal/telegram"
-	"cli-tg-chat-summary/internal/tui"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 type App struct {
@@ -48,7 +45,6 @@ type RunOptions struct {
 
 func (a *App) Run(ctx context.Context, opts RunOptions) error {
 	// Login
-	fmt.Println("Authenticating with Telegram...")
 	if err := a.tgClient.Login(ctx, os.Stdin); err != nil {
 		return fmt.Errorf("failed to login: %w", err)
 	}
@@ -56,124 +52,17 @@ func (a *App) Run(ctx context.Context, opts RunOptions) error {
 	if opts.NonInteractive {
 		return a.runNonInteractive(ctx, opts)
 	}
-
-	for {
-		fmt.Println("Fetching chats (this might take a moment)...")
-		chats, err := a.tgClient.GetDialogs(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to get dialogs: %w", err)
-		}
-
-		if len(chats) == 0 {
-			fmt.Println("No chats found.")
-			return nil
-		}
-
-		// Start TUI
-		markReadFunc := func(chat telegram.Chat) error {
-			if chat.IsForum {
-				return fmt.Errorf("marking forums as read is not supported yet")
-			}
-			// Use TopMessageID to mark everything up to that message as read
-			if chat.TopMessageID == 0 {
-				return fmt.Errorf("no top message id found")
-			}
-			return a.tgClient.MarkAsRead(ctx, chat, chat.TopMessageID)
-		}
-
-		modelOpts := tui.ModelOptions{}
-		if opts.UseDateRange {
-			modelOpts.Mode = tui.ModeDateRange
-			modelOpts.Since = opts.Since
-			modelOpts.Until = opts.Until
-		}
-		model := tui.NewModel(chats, markReadFunc, modelOpts)
-		p := tea.NewProgram(model, tea.WithAltScreen())
-		finalModel, err := p.Run()
-		if err != nil {
-			return fmt.Errorf("failed to run TUI: %w", err)
-		}
-
-		m, ok := finalModel.(tui.Model)
-		if !ok {
-			return fmt.Errorf("internal error: invalid model type")
-		}
-
-		selectedChat := m.GetSelected()
-		if selectedChat == nil {
-			fmt.Println("No chat selected.")
-			return nil
-		}
-
-		mode := m.GetExportMode()
-		if mode == tui.ModeDateRange {
-			since, until, ok := m.GetDateRange()
-			if ok {
-				opts.UseDateRange = true
-				opts.Since = since
-				opts.Until = until
-			}
-		} else {
-			opts.UseDateRange = false
-		}
-
-		var selectedTopic *telegram.Topic
-
-		// Handle forum topic selection
-		if selectedChat.IsForum {
-			fmt.Printf("Fetching topics for forum %s...\n", selectedChat.Title)
-			topics, err := a.tgClient.GetForumTopics(ctx, selectedChat.ID)
-			if err != nil {
-				return fmt.Errorf("failed to get forum topics: %w", err)
-			}
-
-			if len(topics) == 0 {
-				fmt.Println("No topics found in forum.")
-				continue
-			}
-
-			selectedTopic, err = a.chooseForumTopic(topics, opts)
-			if err != nil {
-				return err
-			}
-			if selectedTopic == nil {
-				fmt.Println("No topic selected.")
-				continue
-			}
-		}
-
-		messages, exportTitle, err := a.fetchSelectedMessages(ctx, *selectedChat, selectedTopic, opts)
-		if err != nil {
-			return err
-		}
-
-		if len(messages) == 0 {
-			fmt.Println("No text messages found to export.")
-			continue
-		}
-
-		filename, err := a.exportMessages(exportTitle, messages, opts)
-		if err != nil {
-			return err
-		}
-
-		markResult := a.markMessagesAsRead(ctx, *selectedChat, selectedTopic, messages, opts)
-		if err := showExportSummary(exportTitle, filename, len(messages), formatMarkReadStatus(markResult)); err != nil {
-			return err
-		}
-	}
-
+	return a.runInteractiveTUI(ctx, opts)
 }
 
 func (a *App) runNonInteractive(ctx context.Context, opts RunOptions) error {
-	fmt.Println("Fetching chats (this might take a moment)...")
 	chats, err := a.tgClient.GetDialogs(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get dialogs: %w", err)
 	}
 
 	if len(chats) == 0 {
-		fmt.Println("No chats found.")
+		fmt.Fprintln(os.Stderr, "No chats found.")
 		return nil
 	}
 
@@ -191,12 +80,11 @@ func (a *App) runNonInteractive(ctx context.Context, opts RunOptions) error {
 		if opts.TopicID == 0 && opts.TopicTitle == "" {
 			return fmt.Errorf("forum chat requires --topic-id or --topic")
 		}
-		fmt.Printf("Fetching topics for forum %s...\n", selectedChat.Title)
 		topics, err := a.tgClient.GetForumTopics(ctx, selectedChat.ID)
 		if err != nil {
 			return fmt.Errorf("failed to get forum topics: %w", err)
 		}
-		selectedTopic, err = a.chooseForumTopic(topics, opts)
+		selectedTopic, err = selectForumTopic(topics, opts.TopicID, opts.TopicTitle)
 		if err != nil {
 			return err
 		}
@@ -205,22 +93,26 @@ func (a *App) runNonInteractive(ctx context.Context, opts RunOptions) error {
 		}
 	}
 
-	messages, exportTitle, err := a.fetchSelectedMessages(ctx, *selectedChat, selectedTopic, opts)
+	plan, err := a.buildFetchPlan(*selectedChat, selectedTopic, opts)
+	if err != nil {
+		return err
+	}
+	messages, err := plan.fetch(ctx, nil)
 	if err != nil {
 		return err
 	}
 
 	if len(messages) == 0 {
-		fmt.Println("No text messages found to export.")
+		fmt.Fprintln(os.Stderr, "No text messages found to export.")
 		return nil
 	}
 
-	filename, err := a.exportMessages(exportTitle, messages, opts)
+	filename, err := a.exportMessages(plan.exportTitle, messages, opts)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("Successfully exported %d messages to %s\n", len(messages), filename)
+	fmt.Fprintf(os.Stderr, "Successfully exported %d messages to %s\n", len(messages), filename)
 	markResult := a.markMessagesAsRead(ctx, *selectedChat, selectedTopic, messages, opts)
 	printMarkReadStatus(markResult)
 	return nil
@@ -279,79 +171,12 @@ func selectForumTopic(topics []telegram.Topic, topicID int, topicTitle string) (
 	return nil, fmt.Errorf("forum topic title %q not found", title)
 }
 
-func (a *App) chooseForumTopic(topics []telegram.Topic, opts RunOptions) (*telegram.Topic, error) {
-	if opts.NonInteractive {
-		// Topic selection uses exact title match first, then falls back to contains.
-		return selectForumTopic(topics, opts.TopicID, opts.TopicTitle)
-	}
-
-	// Show topic selection TUI
-	topicModel := tui.NewTopicModel(topics)
-	tp := tea.NewProgram(topicModel, tea.WithAltScreen())
-	finalTopicModel, err := tp.Run()
-	if err != nil {
-		return nil, fmt.Errorf("failed to run topic TUI: %w", err)
-	}
-
-	tm, ok := finalTopicModel.(tui.TopicModel)
-	if !ok {
-		return nil, fmt.Errorf("internal error: invalid topic model type")
-	}
-
-	return tm.GetSelected(), nil
-}
-
 func formatTopicCandidates(topics []telegram.Topic) string {
 	var parts []string
 	for _, topic := range topics {
 		parts = append(parts, fmt.Sprintf("id=%d title=%q", topic.ID, topic.Title))
 	}
 	return strings.Join(parts, ", ")
-}
-
-func (a *App) fetchSelectedMessages(ctx context.Context, selectedChat telegram.Chat, selectedTopic *telegram.Topic, opts RunOptions) ([]telegram.Message, string, error) {
-	var messages []telegram.Message
-	var exportTitle string
-	var err error
-
-	if selectedChat.IsForum {
-		if selectedTopic == nil {
-			return nil, "", fmt.Errorf("forum chat requires --topic-id or --topic")
-		}
-		if opts.UseDateRange {
-			progressTitle := fmt.Sprintf("%s / %s (%s to %s)", selectedChat.Title, selectedTopic.Title, opts.Since.Format("2006-01-02"), opts.Until.Format("2006-01-02"))
-			messages, err = a.fetchWithProgress(FetchOpts{Ctx: ctx, Title: progressTitle}, func(ctx context.Context, progress telegram.ProgressFunc) ([]telegram.Message, error) {
-				return a.tgClient.GetTopicMessagesByDate(ctx, selectedChat.ID, selectedTopic.ID, opts.Since, opts.Until, progress)
-			})
-		} else {
-			progressTitle := fmt.Sprintf("%s / %s (unread)", selectedChat.Title, selectedTopic.Title)
-			messages, err = a.fetchWithProgress(FetchOpts{Ctx: ctx, Title: progressTitle}, func(ctx context.Context, progress telegram.ProgressFunc) ([]telegram.Message, error) {
-				return a.tgClient.GetTopicMessages(ctx, selectedChat.ID, selectedTopic.ID, selectedTopic.LastReadID, progress)
-			})
-		}
-		if err != nil {
-			return nil, "", fmt.Errorf("failed to get topic messages: %w", err)
-		}
-		exportTitle = selectedChat.Title + " - " + selectedTopic.Title
-	} else {
-		if opts.UseDateRange {
-			progressTitle := fmt.Sprintf("%s (%s to %s)", selectedChat.Title, opts.Since.Format("2006-01-02"), opts.Until.Format("2006-01-02"))
-			messages, err = a.fetchWithProgress(FetchOpts{Ctx: ctx, Title: progressTitle}, func(ctx context.Context, progress telegram.ProgressFunc) ([]telegram.Message, error) {
-				return a.tgClient.GetMessagesByDate(ctx, selectedChat.ID, opts.Since, opts.Until, progress)
-			})
-		} else {
-			progressTitle := fmt.Sprintf("%s (unread)", selectedChat.Title)
-			messages, err = a.fetchWithProgress(FetchOpts{Ctx: ctx, Title: progressTitle}, func(ctx context.Context, progress telegram.ProgressFunc) ([]telegram.Message, error) {
-				return a.tgClient.GetUnreadMessages(ctx, selectedChat.ID, selectedChat.LastReadID, progress)
-			})
-		}
-		if err != nil {
-			return nil, "", fmt.Errorf("failed to get messages: %w", err)
-		}
-		exportTitle = selectedChat.Title
-	}
-
-	return messages, exportTitle, nil
 }
 
 func (a *App) exportMessages(exportTitle string, messages []telegram.Message, opts RunOptions) (string, error) {
@@ -425,19 +250,10 @@ func printMarkReadStatus(result markReadResult) {
 	if !result.Attempted {
 		return
 	}
-	fmt.Println("Marking messages as read...")
+	fmt.Fprintln(os.Stderr, "Marking messages as read...")
 	if result.Err != nil {
-		fmt.Printf("Warning: failed to mark messages as read: %v\n", result.Err)
+		fmt.Fprintf(os.Stderr, "Warning: failed to mark messages as read: %v\n", result.Err)
 	} else {
-		fmt.Println("Messages marked as read.")
+		fmt.Fprintln(os.Stderr, "Messages marked as read.")
 	}
-}
-
-func showExportSummary(exportTitle, filename string, count int, markStatus string) error {
-	model := tui.NewSummaryModel(exportTitle, filename, count, markStatus)
-	p := tea.NewProgram(model, tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
-		return fmt.Errorf("failed to run summary TUI: %w", err)
-	}
-	return nil
 }

@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"fmt"
 
 	"cli-tg-chat-summary/internal/telegram"
 	"cli-tg-chat-summary/internal/tui"
@@ -20,11 +19,16 @@ type FetchOpts struct {
 	Title string
 }
 
-func (a *App) fetchWithProgress(opts FetchOpts, fetch func(context.Context, telegram.ProgressFunc) ([]telegram.Message, error)) ([]telegram.Message, error) {
+type fetchHandle struct {
+	msgCh    <-chan tea.Msg
+	resultCh <-chan fetchResult
+	cancel   context.CancelFunc
+}
+
+func (a *App) startFetchWithProgress(opts FetchOpts, fetch func(context.Context, telegram.ProgressFunc) ([]telegram.Message, error)) fetchHandle {
 	msgCh := make(chan tea.Msg, 128)
 	resultCh := make(chan fetchResult, 1)
 	fetchCtx, cancel := context.WithCancel(opts.Ctx)
-	defer cancel()
 
 	go func() {
 		progressFn := func(update telegram.ProgressUpdate) {
@@ -47,14 +51,5 @@ func (a *App) fetchWithProgress(opts FetchOpts, fetch func(context.Context, tele
 		close(msgCh)
 	}()
 
-	model := tui.NewProgressModel(opts.Title, msgCh)
-	p := tea.NewProgram(model, tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
-		cancel()
-		return nil, fmt.Errorf("failed to run progress TUI: %w", err)
-	}
-
-	cancel()
-	result := <-resultCh
-	return result.messages, result.err
+	return fetchHandle{msgCh: msgCh, resultCh: resultCh, cancel: cancel}
 }

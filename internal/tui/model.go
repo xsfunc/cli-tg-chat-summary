@@ -84,6 +84,8 @@ type Model struct {
 	modeList     list.Model
 	selected     *telegram.Chat
 	quitting     bool
+	done         bool
+	canceled     bool
 	markReadFunc func(telegram.Chat) error
 	statusMsg    string
 	errorMsg     string
@@ -237,7 +239,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch keypress := msg.String(); keypress {
 			case "ctrl+c":
 				m.quitting = true
-				return m, tea.Quit
+				m.done = true
+				m.canceled = true
+				return m, nil
 			case "esc":
 				m.errorMsg = ""
 				m.state = stateChatList
@@ -265,7 +269,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch keypress := msg.String(); keypress {
 			case "ctrl+c":
 				m.quitting = true
-				return m, tea.Quit
+				m.done = true
+				m.canceled = true
+				return m, nil
 			case "esc":
 				m.errorMsg = ""
 				m.state = stateChatList
@@ -297,7 +303,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch keypress := msg.String(); keypress {
 			case "ctrl+c", "esc":
 				m.quitting = true
-				return m, tea.Quit
+				m.done = true
+				m.canceled = true
+				return m, nil
 
 			case "q", "Q": // Handle both cases
 				// If we are filtering, we should execute the filter logic (type the letter q)
@@ -305,7 +313,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// However, standard intuitive behavior is "q" quits if not typing.
 				if m.list.FilterState() != list.Filtering {
 					m.quitting = true
-					return m, tea.Quit
+					m.done = true
+					m.canceled = true
+					return m, nil
 				}
 
 			case "m":
@@ -320,7 +330,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if ok {
 					m.selected = &i.chat
 				}
-				return m, tea.Quit
+				m.done = true
+				return m, nil
 
 			case "ctrl+r":
 				if m.list.FilterState() == list.Filtering {
@@ -403,6 +414,14 @@ func (m Model) View() string {
 
 func (m Model) GetSelected() *telegram.Chat {
 	return m.selected
+}
+
+func (m Model) Done() bool {
+	return m.done
+}
+
+func (m Model) Canceled() bool {
+	return m.canceled
 }
 
 func (m Model) GetExportMode() ExportMode {
@@ -493,6 +512,8 @@ type TopicModel struct {
 	list     list.Model
 	selected *telegram.Topic
 	quitting bool
+	done     bool
+	canceled bool
 }
 
 type topicItem struct {
@@ -559,12 +580,16 @@ func (m TopicModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch keypress := msg.String(); keypress {
 		case "ctrl+c", "esc":
 			m.quitting = true
-			return m, tea.Quit
+			m.done = true
+			m.canceled = true
+			return m, nil
 
 		case "q", "Q":
 			if m.list.FilterState() != list.Filtering {
 				m.quitting = true
-				return m, tea.Quit
+				m.done = true
+				m.canceled = true
+				return m, nil
 			}
 
 		case "enter":
@@ -572,7 +597,8 @@ func (m TopicModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if ok {
 				m.selected = &i.topic
 			}
-			return m, tea.Quit
+			m.done = true
+			return m, nil
 		}
 	}
 
@@ -593,4 +619,12 @@ func (m TopicModel) View() string {
 
 func (m TopicModel) GetSelected() *telegram.Topic {
 	return m.selected
+}
+
+func (m TopicModel) Done() bool {
+	return m.done
+}
+
+func (m TopicModel) Canceled() bool {
+	return m.canceled
 }

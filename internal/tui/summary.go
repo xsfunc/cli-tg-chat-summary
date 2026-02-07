@@ -14,6 +14,7 @@ type SummaryModel struct {
 	count      int
 	markStatus string
 	quitting   bool
+	done       bool
 }
 
 func NewSummaryModel(title, filename string, count int, markStatus string) SummaryModel {
@@ -33,11 +34,13 @@ func (m SummaryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case tea.KeyEnter, tea.KeyEsc, tea.KeyCtrlC:
 			m.quitting = true
-			return m, tea.Quit
+			m.done = true
+			return m, nil
 		}
 		if len(msg.Runes) == 1 && (msg.Runes[0] == 'q' || msg.Runes[0] == 'Q') {
 			m.quitting = true
-			return m, tea.Quit
+			m.done = true
+			return m, nil
 		}
 	}
 	return m, nil
@@ -59,4 +62,8 @@ func (m SummaryModel) View() string {
 	}
 	b.WriteString("\nPress Enter to return to chat list.")
 	return b.String()
+}
+
+func (m SummaryModel) Done() bool {
+	return m.done
 }

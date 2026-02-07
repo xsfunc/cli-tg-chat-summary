@@ -55,8 +55,11 @@ func TestModel_Update_Quit_CtrlC(t *testing.T) {
 	if !m.quitting {
 		t.Error("expected quitting to be true after Ctrl+C")
 	}
-	if cmd == nil {
-		t.Error("expected quit command")
+	if !m.Done() || !m.Canceled() {
+		t.Error("expected model to be done and canceled after Ctrl+C")
+	}
+	if cmd != nil {
+		t.Error("expected no command after Ctrl+C")
 	}
 }
 
@@ -70,8 +73,11 @@ func TestModel_Update_Quit_Esc(t *testing.T) {
 	if !m.quitting {
 		t.Error("expected quitting to be true after Esc")
 	}
-	if cmd == nil {
-		t.Error("expected quit command")
+	if !m.Done() || !m.Canceled() {
+		t.Error("expected model to be done and canceled after Esc")
+	}
+	if cmd != nil {
+		t.Error("expected no command after Esc")
 	}
 }
 
@@ -85,8 +91,11 @@ func TestModel_Update_Quit_Q(t *testing.T) {
 	if !m.quitting {
 		t.Error("expected quitting to be true after 'q'")
 	}
-	if cmd == nil {
-		t.Error("expected quit command")
+	if !m.Done() || !m.Canceled() {
+		t.Error("expected model to be done and canceled after 'q'")
+	}
+	if cmd != nil {
+		t.Error("expected no command after 'q'")
 	}
 }
 
@@ -107,8 +116,11 @@ func TestModel_Update_Enter(t *testing.T) {
 	} else if m.selected.ID != 1 {
 		t.Errorf("expected selected chat ID 1, got %d", m.selected.ID)
 	}
-	if cmd == nil {
-		t.Error("expected quit command after selection")
+	if !m.Done() || m.Canceled() {
+		t.Error("expected model to be done and not canceled after Enter")
+	}
+	if cmd != nil {
+		t.Error("expected no command after selection")
 	}
 }
 
@@ -295,8 +307,11 @@ func TestTopicModel_Update_Quit(t *testing.T) {
 	if !m.quitting {
 		t.Error("expected quitting to be true after Ctrl+C")
 	}
-	if cmd == nil {
-		t.Error("expected quit command")
+	if !m.Done() || !m.Canceled() {
+		t.Error("expected topic model to be done and canceled after Ctrl+C")
+	}
+	if cmd != nil {
+		t.Error("expected no command after Ctrl+C")
 	}
 }
 
@@ -313,8 +328,11 @@ func TestTopicModel_Update_Enter(t *testing.T) {
 	if m.selected == nil {
 		t.Error("expected selected to not be nil after Enter")
 	}
-	if cmd == nil {
-		t.Error("expected quit command after selection")
+	if !m.Done() || m.Canceled() {
+		t.Error("expected topic model to be done and not canceled after Enter")
+	}
+	if cmd != nil {
+		t.Error("expected no command after selection")
 	}
 }
 
@@ -398,11 +416,14 @@ func TestSummaryModel_View(t *testing.T) {
 func TestSummaryModel_Update_Enter(t *testing.T) {
 	model := NewSummaryModel("Test Chat", "exports/test.txt", 3, "")
 	newModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil {
-		t.Error("expected quit command")
+	if cmd != nil {
+		t.Error("expected no command after Enter")
 	}
 	m := newModel.(SummaryModel)
 	if !m.quitting {
 		t.Error("expected quitting to be true")
+	}
+	if !m.Done() {
+		t.Error("expected done to be true")
 	}
 }

@@ -99,6 +99,8 @@ Or run directly:
 make run
 ```
 
+Note: Interactive mode runs entirely inside the TUI (single alt-screen session) and does not print status messages to stdout.
+
 
 ## Date Range Export
 

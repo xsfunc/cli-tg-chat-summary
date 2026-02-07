@@ -40,7 +40,7 @@ func main() {
 	}
 
 	if (topicID != 0 || topicTitle != "") && chatIDRaw == 0 {
-		fmt.Println("Error: --topic-id/--topic requires --id")
+		fmt.Fprintln(os.Stderr, "Error: --topic-id/--topic requires --id")
 		os.Exit(1)
 	}
 
@@ -48,15 +48,15 @@ func main() {
 		opts.UseDateRange = true
 		opts.Since, err = time.Parse("2006-01-02", sinceStr)
 		if err != nil {
-			fmt.Printf("Error: Invalid date format for --since: %s\n", sinceStr)
-			fmt.Println("Please use the format YYYY-MM-DD (e.g., 2024-01-20)")
+			fmt.Fprintf(os.Stderr, "Error: Invalid date format for --since: %s\n", sinceStr)
+			fmt.Fprintln(os.Stderr, "Please use the format YYYY-MM-DD (e.g., 2024-01-20)")
 			os.Exit(1)
 		}
 		if untilStr != "" {
 			opts.Until, err = time.Parse("2006-01-02", untilStr)
 			if err != nil {
-				fmt.Printf("Error: Invalid date format for --until: %s\n", untilStr)
-				fmt.Println("Please use the format YYYY-MM-DD (e.g., 2024-01-20)")
+				fmt.Fprintf(os.Stderr, "Error: Invalid date format for --until: %s\n", untilStr)
+				fmt.Fprintln(os.Stderr, "Please use the format YYYY-MM-DD (e.g., 2024-01-20)")
 				os.Exit(1)
 			}
 			// set until to end of that day
