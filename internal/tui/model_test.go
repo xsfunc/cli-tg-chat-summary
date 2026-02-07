@@ -204,6 +204,32 @@ func TestItemDelegate_Update(t *testing.T) {
 	}
 }
 
+func TestTruncateWithEllipsis(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		in   string
+		max  int
+		want string
+	}{
+		{name: "no-truncate", in: "short", max: 10, want: "short"},
+		{name: "truncate", in: "this is long", max: 8, want: "this ..."},
+		{name: "small-max", in: "abcdef", max: 3, want: "abc"},
+		{name: "zero", in: "abcdef", max: 0, want: ""},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := truncateWithEllipsis(tc.in, tc.max); got != tc.want {
+				t.Errorf("truncateWithEllipsis(%q, %d) = %q, want %q", tc.in, tc.max, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestModel_Update_CtrlR(t *testing.T) {
 	chats := []telegram.Chat{{ID: 1, Title: "Test Chat", UnreadCount: 5}}
 	called := false

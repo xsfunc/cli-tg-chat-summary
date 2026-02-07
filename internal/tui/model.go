@@ -23,8 +23,8 @@ var (
 	paginationStyle   = list.DefaultStyles().PaginationStyle.PaddingLeft(4)
 	helpStyle         = list.DefaultStyles().HelpStyle.PaddingLeft(4).PaddingBottom(1)
 	quitTextStyle     = lipgloss.NewStyle().Margin(1, 0, 2, 4)
-	modeStyle         = lipgloss.NewStyle().MarginLeft(2).Foreground(lipgloss.Color("62"))
 	errorStyle        = lipgloss.NewStyle().MarginLeft(2).Foreground(lipgloss.Color("160"))
+	statusBarStyle    = lipgloss.NewStyle().PaddingLeft(2).Foreground(lipgloss.Color("62"))
 )
 
 type item struct {
@@ -45,6 +45,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	}
 
 	str := fmt.Sprintf("%s (%d unread)", i.chat.Title, i.chat.UnreadCount)
+	str = truncateWithEllipsis(str, listContentWidth(m.Width()))
 
 	fn := itemStyle.Render
 	if index == m.Index() {
@@ -395,10 +396,7 @@ func (m Model) View() string {
 		return renderDateInput("End date (YYYY-MM-DD, optional)", m.untilInput, m.errorMsg)
 	default:
 		view := m.list.View()
-		view += "\n" + modeStyle.Render("Mode: "+modeLabel(m.mode))
-		if m.statusMsg != "" {
-			view += "\n" + quitTextStyle.Foreground(lipgloss.Color("62")).Render(m.statusMsg)
-		}
+		view += "\n" + renderStatusBar(m.list.Width(), m.mode, m.statusMsg, m.currentChat())
 		return view
 	}
 }
@@ -441,6 +439,55 @@ func renderDateInput(title string, input textinput.Model, errMsg string) string 
 	return b.String()
 }
 
+func listContentWidth(width int) int {
+	const padding = 4
+	if width <= padding {
+		return 0
+	}
+	return width - padding
+}
+
+func truncateWithEllipsis(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	if max <= 3 {
+		return string(runes[:max])
+	}
+	return string(runes[:max-3]) + "..."
+}
+
+func renderStatusBar(width int, mode ExportMode, statusMsg string, chat *telegram.Chat) string {
+	if width <= 0 {
+		width = 80
+	}
+	parts := []string{"Mode: " + modeLabel(mode)}
+	if chat != nil {
+		parts = append(parts, fmt.Sprintf("ID: %d", chat.ID))
+	}
+	if statusMsg != "" {
+		parts = append(parts, statusMsg)
+	}
+	contentWidth := width - 2
+	if contentWidth < 0 {
+		contentWidth = 0
+	}
+	line := truncateWithEllipsis(strings.Join(parts, " | "), contentWidth)
+	return statusBarStyle.Render(line)
+}
+
+func (m Model) currentChat() *telegram.Chat {
+	i, ok := m.list.SelectedItem().(item)
+	if !ok {
+		return nil
+	}
+	return &i.chat
+}
+
 // TopicModel is a TUI model for selecting forum topics
 type TopicModel struct {
 	list     list.Model
@@ -466,6 +513,7 @@ func (d topicItemDelegate) Render(w io.Writer, m list.Model, index int, listItem
 	}
 
 	str := fmt.Sprintf("%s (%d unread)", i.topic.Title, i.topic.UnreadCount)
+	str = truncateWithEllipsis(str, listContentWidth(m.Width()))
 
 	fn := itemStyle.Render
 	if index == m.Index() {
