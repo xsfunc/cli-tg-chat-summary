@@ -22,6 +22,7 @@
 - Before confirming changes, check `git status -sb`, `git diff`, and `git diff --staged`.
 - For quick rollback, prefer `git restore --staged .` and `git restore .`.
 - Use Conventional Commits: `type(scope): summary` (e.g., `feat(cli): add --json output`).
+- After implementing code changes (before commit), run `make lint`.
 
 ## Tooling
 - Provide short aliases in `Makefile` or `Taskfile` for build, test, and lint.
