@@ -66,6 +66,32 @@ In the TUI, press `m` to choose the export mode. Select `Date range` to enter `s
 ./bin/tg-summary --since 2024-01-01 --until 2024-01-31
 ```
 
+## Non-Interactive Export By Chat ID
+
+Use `--id` to skip the TUI and export a specific chat in one shot. This works with date ranges too.
+
+```bash
+# Export unread messages from a chat
+./bin/tg-summary --id 123456789
+
+# Export with date range
+./bin/tg-summary --id 123456789 --since 2024-01-01 --until 2024-01-31
+```
+
+### Forum Topics
+
+For forum chats, you must provide a topic via `--topic-id` or `--topic`:
+
+```bash
+./bin/tg-summary --id 123456789 --topic-id 42
+./bin/tg-summary --id 123456789 --topic "Release Notes"
+```
+
+### `-100...` IDs
+
+`--id` accepts both raw MTProto `ChannelID` values and Bot API style `-100...` IDs (which are normalized automatically).
+To find chat IDs, use a Bot API-based tool or client that exposes chat IDs; channels/supergroups are often shown with the `-100...` prefix.
+
 ## How It Works
 
 1. Authenticate with Telegram using `gotgproto`.
@@ -91,6 +117,9 @@ The session file is stored at `session/session.db`.
 
 - `--since YYYY-MM-DD` start date for export (enables date range mode).
 - `--until YYYY-MM-DD` end date for export (defaults to now when omitted).
+- `--id <int64>` chat ID (raw or `-100...`) to export without TUI.
+- `--topic-id <int>` forum topic ID for non-interactive mode.
+- `--topic <string>` forum topic title for non-interactive mode.
 
 ## Output Format
 

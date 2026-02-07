@@ -16,12 +16,33 @@ import (
 
 func main() {
 	var sinceStr, untilStr string
+	var chatIDRaw int64
+	var topicID int
+	var topicTitle string
 	flag.StringVar(&sinceStr, "since", "", "Start date (YYYY-MM-DD)")
 	flag.StringVar(&untilStr, "until", "", "End date (YYYY-MM-DD)")
+	flag.Int64Var(&chatIDRaw, "id", 0, "Chat ID (raw or -100... format) to export without TUI")
+	flag.IntVar(&topicID, "topic-id", 0, "Forum topic ID (required for forum chats in non-interactive mode)")
+	flag.StringVar(&topicTitle, "topic", "", "Forum topic title (alternative to --topic-id)")
 	flag.Parse()
 
 	var opts app.RunOptions
 	var err error
+
+	if chatIDRaw != 0 {
+		opts.NonInteractive = true
+		opts.ChatIDRaw = chatIDRaw
+		// Telegram Bot API uses -100... IDs for channels/supergroups.
+		// Dialogs return raw ChannelID, so normalize by stripping the -100 prefix.
+		opts.ChatID = normalizeChatID(chatIDRaw)
+		opts.TopicID = topicID
+		opts.TopicTitle = topicTitle
+	}
+
+	if (topicID != 0 || topicTitle != "") && chatIDRaw == 0 {
+		fmt.Println("Error: --topic-id/--topic requires --id")
+		os.Exit(1)
+	}
 
 	if sinceStr != "" {
 		opts.UseDateRange = true
@@ -68,4 +89,11 @@ func main() {
 	if err := application.Run(ctx, opts); err != nil {
 		log.Fatalf("Application error: %v", err)
 	}
+}
+
+func normalizeChatID(id int64) int64 {
+	if id <= -1000000000000 {
+		return -id - 1000000000000
+	}
+	return id
 }
