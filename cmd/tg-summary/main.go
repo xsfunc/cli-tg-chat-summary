@@ -22,7 +22,7 @@ func main() {
 	var topicTitle string
 	flag.StringVar(&sinceStr, "since", "", "Start date (YYYY-MM-DD)")
 	flag.StringVar(&untilStr, "until", "", "End date (YYYY-MM-DD)")
-	flag.StringVar(&formatName, "format", "text", "Export format (text, xml)")
+	flag.StringVar(&formatName, "format", "text", "Export format (text, xml, xml-compact)")
 	flag.Int64Var(&chatIDRaw, "id", 0, "Chat ID (raw or -100... format) to export without TUI")
 	flag.IntVar(&topicID, "topic-id", 0, "Forum topic ID (required for forum chats in non-interactive mode)")
 	flag.StringVar(&topicTitle, "topic", "", "Forum topic title (alternative to --topic-id)")

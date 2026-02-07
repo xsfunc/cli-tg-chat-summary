@@ -174,7 +174,7 @@ The session file is stored at `session/session.db`.
 
 - `--since YYYY-MM-DD` start date for export (enables date range mode).
 - `--until YYYY-MM-DD` end date for export (defaults to now when omitted).
-- `--format <text|xml>` export format (default `text`).
+- `--format <text|xml|xml-compact>` export format (default `text`).
 - `--id <int64>` chat ID (raw or `-100...`) to export without TUI.
 - `--topic-id <int>` forum topic ID for non-interactive mode.
 - `--topic <string>` forum topic title for non-interactive mode.
@@ -215,6 +215,22 @@ Use `--format xml` to export messages as XML:
   </message>
 </chat>
 ```
+
+### XML Compact Format
+
+Use `--format xml-compact` to export a compact XML variant with short tags/attributes:
+
+```xml
+<c t="Project Team" d="2025-01-27T10:35:12Z" n="3">
+  <m t="2025-01-27T09:12:00Z" s="123">Morning! Status update?</m>
+</c>
+```
+
+Compact field mapping:
+- `c` root tag: `t` title, `d` export date, `n` total messages, `s` since, `u` until.
+- `m` message tag: `t` time, `s` sender id, `n` sender name.
+- `r` reply tag (optional): `i` message id, `s` sender id, `n` sender name.
+- `rx` reactions container (optional) with `x` entries: `e` emoji, `c` count.
 
 ## Project Structure
 

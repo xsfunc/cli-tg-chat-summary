@@ -89,5 +89,8 @@ func NewDefaultTemplateRegistry() *TemplateRegistry {
 	if err := registry.Register(NewXMLTemplate()); err != nil {
 		panic(err)
 	}
+	if err := registry.Register(NewXMLCompactTemplate()); err != nil {
+		panic(err)
+	}
 	return registry
 }
