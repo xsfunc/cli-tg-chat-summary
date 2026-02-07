@@ -464,12 +464,26 @@ func renderDateInput(title string, input textinput.Model, errMsg string) string 
 func renderStatusBar(mode ExportMode, statusMsg string, chat *telegram.Chat) string {
 	parts := []string{"Mode: " + modeLabel(mode)}
 	if chat != nil {
+		parts = append(parts, "Type: "+chatTypeLabel(*chat))
 		parts = append(parts, fmt.Sprintf("ID: %d", chat.ID))
 	}
 	if statusMsg != "" {
 		parts = append(parts, statusMsg)
 	}
 	return statusBarStyle.Render(strings.Join(parts, " | "))
+}
+
+func chatTypeLabel(chat telegram.Chat) string {
+	if chat.IsForum {
+		return "topics"
+	}
+	if chat.IsBot {
+		return "bot"
+	}
+	if chat.IsUser {
+		return "private"
+	}
+	return "chat"
 }
 
 func (m Model) currentChat() *telegram.Chat {

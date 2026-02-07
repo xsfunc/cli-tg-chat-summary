@@ -144,8 +144,9 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.topic = updated.(tui.TopicModel)
 		if m.topic.Done() {
 			if m.topic.Canceled() {
-				m.state = stateExit
-				return m, tea.Quit
+				m.selectedTopic = nil
+				m.state = stateChatList
+				return m, nil
 			}
 			selected := m.topic.GetSelected()
 			if selected == nil {
@@ -261,7 +262,7 @@ func (m appModel) setMessage(title, body, footer string, next appState, err erro
 func (m appModel) newChatModel(chats []telegram.Chat) tui.Model {
 	markReadFunc := func(chat telegram.Chat) error {
 		if chat.IsForum {
-			return fmt.Errorf("marking forums as read is not supported yet")
+			return markForumAsRead(m.ctx, m.app.tgClient, chat)
 		}
 		if chat.TopMessageID == 0 {
 			return fmt.Errorf("no top message id found")
@@ -298,6 +299,30 @@ func (m *appModel) cancelFetch() {
 	}
 	m.fetchHandle.cancel()
 	m.fetchHandle = nil
+}
+
+type forumMarkClient interface {
+	GetForumTopics(ctx context.Context, chatID int64) ([]telegram.Topic, error)
+	MarkTopicAsRead(ctx context.Context, chatID int64, topicID int, maxID int) error
+}
+
+func markForumAsRead(ctx context.Context, client forumMarkClient, chat telegram.Chat) error {
+	topics, err := client.GetForumTopics(ctx, chat.ID)
+	if err != nil {
+		return fmt.Errorf("failed to get forum topics: %w", err)
+	}
+	for _, topic := range topics {
+		if topic.UnreadCount == 0 {
+			continue
+		}
+		if topic.TopMessageID == 0 {
+			return fmt.Errorf("topic %q (id=%d) has no top message id", topic.Title, topic.ID)
+		}
+		if err := client.MarkTopicAsRead(ctx, chat.ID, topic.ID, topic.TopMessageID); err != nil {
+			return fmt.Errorf("topic %q (id=%d): %w", topic.Title, topic.ID, err)
+		}
+	}
+	return nil
 }
 
 func fetchChatsCmd(ctx context.Context, client *telegram.Client) tea.Cmd {

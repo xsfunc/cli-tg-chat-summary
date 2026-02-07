@@ -38,15 +38,18 @@ type Chat struct {
 	UnreadCount  int
 	IsChannel    bool
 	IsForum      bool
+	IsUser       bool
+	IsBot        bool
 	LastReadID   int
 	TopMessageID int
 }
 
 type Topic struct {
-	ID          int
-	Title       string
-	UnreadCount int
-	LastReadID  int
+	ID           int
+	Title        string
+	UnreadCount  int
+	LastReadID   int
+	TopMessageID int
 }
 
 type Message struct {
@@ -247,10 +250,13 @@ func (c *Client) processDialogs(dialogs []tg.DialogClass, chats []tg.ChatClass, 
 		var peerID int64
 		var isChannel bool
 		var isForum bool
+		var isUser bool
+		var isBot bool
 
 		switch p := dlg.Peer.(type) {
 		case *tg.PeerUser:
 			peerID = p.UserID
+			isUser = true
 			if u, ok := userMap[peerID]; ok {
 				switch user := u.(type) {
 				case *tg.User:
@@ -258,6 +264,7 @@ func (c *Client) processDialogs(dialogs []tg.DialogClass, chats []tg.ChatClass, 
 					if user.Username != "" {
 						title += " (@" + user.Username + ")"
 					}
+					isBot = user.Bot
 				}
 			}
 		case *tg.PeerChat:
@@ -290,6 +297,8 @@ func (c *Client) processDialogs(dialogs []tg.DialogClass, chats []tg.ChatClass, 
 			UnreadCount:  dlg.UnreadCount,
 			IsChannel:    isChannel,
 			IsForum:      isForum,
+			IsUser:       isUser,
+			IsBot:        isBot,
 			LastReadID:   dlg.ReadInboxMaxID,
 			TopMessageID: dlg.TopMessage,
 		})
@@ -402,10 +411,11 @@ func (c *Client) GetForumTopics(ctx context.Context, chatID int64) ([]Topic, err
 			continue
 		}
 		result = append(result, Topic{
-			ID:          topic.ID,
-			Title:       topic.Title,
-			UnreadCount: topic.UnreadCount,
-			LastReadID:  topic.ReadInboxMaxID,
+			ID:           topic.ID,
+			Title:        topic.Title,
+			UnreadCount:  topic.UnreadCount,
+			LastReadID:   topic.ReadInboxMaxID,
+			TopMessageID: topic.TopMessage,
 		})
 	}
 

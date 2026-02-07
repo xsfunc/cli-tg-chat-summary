@@ -241,6 +241,25 @@ func TestModel_Update_CtrlR(t *testing.T) {
 	}
 }
 
+func TestChatTypeLabel(t *testing.T) {
+	tests := []struct {
+		name string
+		chat telegram.Chat
+		want string
+	}{
+		{name: "forum", chat: telegram.Chat{IsForum: true}, want: "topics"},
+		{name: "bot", chat: telegram.Chat{IsBot: true, IsUser: true}, want: "bot"},
+		{name: "private", chat: telegram.Chat{IsUser: true}, want: "private"},
+		{name: "chat", chat: telegram.Chat{}, want: "chat"},
+	}
+
+	for _, tt := range tests {
+		if got := chatTypeLabel(tt.chat); got != tt.want {
+			t.Errorf("%s: chatTypeLabel() = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
 // TopicModel tests
 
 func TestNewTopicModel(t *testing.T) {

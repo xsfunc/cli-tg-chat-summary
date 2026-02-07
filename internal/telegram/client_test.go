@@ -312,6 +312,8 @@ func TestChatStruct(t *testing.T) {
 		UnreadCount: 10,
 		IsChannel:   true,
 		IsForum:     true,
+		IsUser:      false,
+		IsBot:       false,
 		LastReadID:  50,
 	}
 
@@ -323,6 +325,12 @@ func TestChatStruct(t *testing.T) {
 	}
 	if !chat.IsForum {
 		t.Error("expected IsForum true")
+	}
+	if chat.IsUser {
+		t.Error("expected IsUser false")
+	}
+	if chat.IsBot {
+		t.Error("expected IsBot false")
 	}
 }
 
