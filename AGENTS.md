@@ -17,7 +17,7 @@
 - Do not change `go.mod` or `go.sum` unless required by the change.
 
 ## Git (Local)
-- Use a dedicated branch per task (e.g., `git switch -c feat/my-task`).
+- Commit directly to `main`.
 - Make small, frequent commits; use `git add -p` to stage chunks.
 - Before confirming changes, check `git status -sb`, `git diff`, and `git diff --staged`.
 - For quick rollback, prefer `git restore --staged .` and `git restore .`.
